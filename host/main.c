@@ -1,0 +1,66 @@
+// The firmware on the PC, for tests: runs a script of presses at 60 frames a second, writes screenshots (PGM, 4x)
+// and the sound (WAV). Never opens a window.
+//   build/vmxhost [-o outdir] < script        script lines: wait MS | press BTN | hold BTN MS | shot NAME | log
+//   BTN: up down left right a b side
+#include "../core/vmxfw.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static char outdir[256] = ".";
+static uint32_t ms;
+static int held;
+static FILE *wav; static long wavN;
+
+void *plat_alloc(size_t n) { void *p = calloc(1, n); if (!p) { fprintf(stderr, "out of memory\n"); exit(1); } return p; }
+int plat_load(const char *key, void *buf, int max) {
+  char p[400]; snprintf(p, sizeof p, "%s/save_%s.bin", outdir, key);
+  FILE *f = fopen(p, "rb"); if (!f) return 0; int n = (int)fread(buf, 1, (size_t)max, f); fclose(f); return n;
+}
+void plat_save(const char *key, const void *buf, int n) {
+  char p[400]; snprintf(p, sizeof p, "%s/save_%s.bin", outdir, key);
+  FILE *f = fopen(p, "wb"); if (f) { fwrite(buf, 1, (size_t)n, f); fclose(f); }
+}
+int plat_day(void) { return 400; }
+const char *plat_name(void) { return "PC TEST"; }
+
+static void frame(void) {
+  ms += 1000 / 60 + ((ms / 1000 * 60) % 3 == 0);  // ~16.67 ms
+  vmx_frame(ms, held);
+  int16_t a[VMX_RATE / 60 + 1]; int n = VMX_RATE / 60; vmx_audio(a, n);
+  if (wav) { fwrite(a, 2, (size_t)n, wav); wavN += n; }
+}
+static void run(int t) { uint32_t end = ms + (uint32_t)t; while (ms < end) frame(); }
+static int bit(const char *b) {
+  const char *N[] = { "up", "down", "left", "right", "a", "b", "side" };
+  for (int i = 0; i < 7; i++) if (!strcmp(b, N[i])) return 1 << i;
+  fprintf(stderr, "unknown button %s\n", b); return 0;
+}
+static void shot(const char *name) {
+  char p[400]; snprintf(p, sizeof p, "%s/%s.pgm", outdir, name);
+  FILE *f = fopen(p, "wb"); if (!f) return;
+  const uint8_t *s = vmx_screen(); fprintf(f, "P5 256 256 255\n");
+  for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) fputc(s[(y / 4) * 64 + x / 4] ? 255 : 0, f);
+  fclose(f);
+}
+static void wav_hdr(FILE *f, long n) {
+  unsigned char h[44] = "RIFF....WAVEfmt \x10\0\0\0\1\0\1\0........\2\0\x10\0data....";
+  long rate = VMX_RATE, by = rate * 2, sz = n * 2;
+  for (int i = 0; i < 4; i++) { h[4 + i] = (unsigned char)((36 + sz) >> (8 * i)); h[24 + i] = (unsigned char)(rate >> (8 * i));
+    h[28 + i] = (unsigned char)(by >> (8 * i)); h[40 + i] = (unsigned char)(sz >> (8 * i)); }
+  fseek(f, 0, SEEK_SET); fwrite(h, 1, 44, f);
+}
+int main(int argc, char **argv) {
+  for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "-o") && i + 1 < argc) snprintf(outdir, sizeof outdir, "%s", argv[++i]);
+  char p[400]; snprintf(p, sizeof p, "%s/sound.wav", outdir); wav = fopen(p, "wb"); if (wav) fseek(wav, 44, SEEK_SET);
+  vmx_init();
+  char line[256], a[64]; int v;
+  while (fgets(line, sizeof line, stdin)) {
+    if (sscanf(line, "wait %d", &v) == 1) run(v);
+    else if (sscanf(line, "hold %63s %d", a, &v) == 2) { held |= bit(a); run(v); held &= ~bit(a); frame(); }
+    else if (sscanf(line, "press %63s", a) == 1) { held |= bit(a); frame(); frame(); held &= ~bit(a); frame(); }
+    else if (sscanf(line, "shot %63s", a) == 1) shot(a);
+  }
+  if (wav) { wav_hdr(wav, wavN); fclose(wav); }
+  return 0;
+}
