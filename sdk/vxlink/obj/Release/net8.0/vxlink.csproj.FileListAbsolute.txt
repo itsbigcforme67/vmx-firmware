@@ -1,0 +1,14 @@
+/home/james/claude projects/vmx-firmware/build/vxlink/vxlink
+/home/james/claude projects/vmx-firmware/build/vxlink/vxlink.deps.json
+/home/james/claude projects/vmx-firmware/build/vxlink/vxlink.runtimeconfig.json
+/home/james/claude projects/vmx-firmware/build/vxlink/vxlink.dll
+/home/james/claude projects/vmx-firmware/build/vxlink/vxlink.pdb
+/home/james/claude projects/vmx-firmware/sdk/vxlink/obj/Release/net8.0/vxlink.GeneratedMSBuildEditorConfig.editorconfig
+/home/james/claude projects/vmx-firmware/sdk/vxlink/obj/Release/net8.0/vxlink.AssemblyInfoInputs.cache
+/home/james/claude projects/vmx-firmware/sdk/vxlink/obj/Release/net8.0/vxlink.AssemblyInfo.cs
+/home/james/claude projects/vmx-firmware/sdk/vxlink/obj/Release/net8.0/vxlink.csproj.CoreCompileInputs.cache
+/home/james/claude projects/vmx-firmware/sdk/vxlink/obj/Release/net8.0/vxlink.dll
+/home/james/claude projects/vmx-firmware/sdk/vxlink/obj/Release/net8.0/refint/vxlink.dll
+/home/james/claude projects/vmx-firmware/sdk/vxlink/obj/Release/net8.0/vxlink.pdb
+/home/james/claude projects/vmx-firmware/sdk/vxlink/obj/Release/net8.0/vxlink.genruntimeconfig.cache
+/home/james/claude projects/vmx-firmware/sdk/vxlink/obj/Release/net8.0/ref/vxlink.dll

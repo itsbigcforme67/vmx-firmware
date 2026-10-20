@@ -1,5 +1,11 @@
-// The games on this VMX. Each is a C core with the simulator's adapter rules (POCKET ARCADE vmx/games.js).
+// The games on this VMX: managed games from GAME.VXP files (core/game_vx.c, added by the platform), then the
+// built-in ones with C cores (FOLD ROOMS, until it is ported to C#).
 #include "vmxfw.h"
-extern const VmxGame GAME_FOLD;
-const VmxGame *const VMX_GAMES[] = { &GAME_FOLD };
-const int VMX_NGAMES = (int)(sizeof VMX_GAMES / sizeof VMX_GAMES[0]);
+extern VmxGame GAME_FOLD;
+VmxGame *VMX_GAMES[16];
+int VMX_NGAMES;
+int vx_games(VmxGame **out, int max);       // core/game_vx.c
+void games_init(void) {
+  VMX_NGAMES = vx_games(VMX_GAMES, 15);
+  VMX_GAMES[VMX_NGAMES++] = &GAME_FOLD;
+}

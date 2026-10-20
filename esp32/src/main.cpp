@@ -6,7 +6,13 @@
 #include <M5Unified.h>
 #include <Preferences.h>
 #include <esp_heap_caps.h>
+#include <LittleFS.h>
+#include <WiFi.h>
+#include <WiFiManager.h>
+#include <ArduinoOTA.h>
+#include <WebServer.h>
 #include "../../core/vmxfw.h"
+#include "games_builtin.h"
 
 // ------------------------------------------------------------------ platform calls for the core
 static Preferences prefs;
@@ -29,6 +35,96 @@ extern "C" int plat_day(void) {
   return (int)((mktime(&t) - mktime(&e)) / 86400);
 }
 extern "C" const char *plat_name(void) { return "CORES3 RIG"; }
+
+// ------------------------------------------------------------------ Wi-Fi: setup hotspot, firmware over the air, game uploads
+// SETTINGS > WIFI > A opens a hotspot "VMX-SETUP": join it with a phone, pick your network, type its password there
+// (the VMX keeps it). Once on the network: firmware updates with `pio run -e ota -t upload` (ArduinoOTA, vmx.local),
+// and games with tools/push_game.sh (HTTP POST to /game, same password).
+static WiFiManager wm;
+static WebServer web(80);
+static bool portal = false, netUp = false, otaBusy = false;
+static File upFile; static String upName; static bool upOk = false;
+static void otaScreen(int pct) {
+  M5.Display.fillRect(60, 214, 200, 22, 0x18E3);
+  M5.Display.setTextColor(0xFFFF, 0x18E3); M5.Display.setTextDatum(middle_center); M5.Display.setFont(&fonts::Font2);
+  char b[32]; snprintf(b, sizeof b, pct < 0 ? "UPDATING..." : "UPDATING %d%%", pct); M5.Display.drawString(b, 160, 225);
+}
+static bool authed() {
+  if (web.header("X-VMX-Key") == OTA_PASSWORD) return true;
+  web.send(403, "text/plain", "wrong key\n"); return false;
+}
+static void netStart() {                         // once connected: OTA + the little web server
+  ArduinoOTA.setHostname("vmx"); ArduinoOTA.setPassword(OTA_PASSWORD);
+  ArduinoOTA.onStart([]() { otaBusy = true; M5.Speaker.stop(); otaScreen(-1); });
+  ArduinoOTA.onProgress([](unsigned a, unsigned b) { static int last = -1; int p = (int)(a * 100ull / (b ? b : 1)); if (p / 5 != last) { last = p / 5; otaScreen(p); } });
+  ArduinoOTA.onError([](ota_error_t e) { otaBusy = false; Serial.printf("OTA error %d\n", (int)e); });
+  ArduinoOTA.begin();
+  const char *hdrs[] = { "X-VMX-Key" }; web.collectHeaders(hdrs, 1);
+  web.on("/", HTTP_GET, []() {
+    String s = "VMX (CoreS3 rig)\ngames on flash:\n";
+    File d = LittleFS.open("/games"); if (d) for (File f = d.openNextFile(); f; f = d.openNextFile()) s += String("  ") + f.name() + " " + f.size() + "\n";
+    s += "built in:\n"; for (int i = 0; i < NBUILTIN; i++) s += String("  ") + BUILTIN[i].name + "\n";
+    web.send(200, "text/plain", s);
+  });
+  // POST /game?name=BLOX.VXP, body = the file (multipart "file"); the VMX restarts to load it
+  web.on("/game", HTTP_POST, []() {
+    if (!authed()) return;
+    web.send(upOk ? 200 : 400, "text/plain", upOk ? "ok, restarting\n" : "upload failed\n");
+    if (upOk) { delay(200); ESP.restart(); }
+  }, []() {
+    HTTPUpload &u = web.upload();
+    if (u.status == UPLOAD_FILE_START) {
+      upOk = false; if (web.header("X-VMX-Key") != OTA_PASSWORD) return;
+      upName = u.filename; int sl = upName.lastIndexOf('/'); if (sl >= 0) upName = upName.substring(sl + 1);
+      upName.toUpperCase(); if (!upName.endsWith(".VXP") || upName.length() > 16) return;
+      LittleFS.mkdir("/games"); upFile = LittleFS.open("/games/" + upName + ".tmp", "w");
+    } else if (u.status == UPLOAD_FILE_WRITE) { if (upFile) upFile.write(u.buf, u.currentSize); }
+    else if (u.status == UPLOAD_FILE_END && upFile) {
+      upFile.close(); LittleFS.remove("/games/" + upName); LittleFS.rename("/games/" + upName + ".tmp", "/games/" + upName); upOk = true;
+    }
+  });
+  web.on("/game", HTTP_DELETE, []() {               // DELETE /game?name=BLOX.VXP
+    if (!authed()) return;
+    String n = web.arg("name"); n.toUpperCase(); bool ok = n.endsWith(".VXP") && LittleFS.remove("/games/" + n);
+    web.send(ok ? 200 : 404, "text/plain", ok ? "deleted, restarting\n" : "no such game\n"); if (ok) { delay(200); ESP.restart(); }
+  });
+  web.on("/reboot", HTTP_POST, []() { if (!authed()) return; web.send(200, "text/plain", "restarting\n"); delay(200); ESP.restart(); });
+  web.begin();
+  Serial.printf("Wi-Fi up: %s (vmx.local)\n", WiFi.localIP().toString().c_str());
+}
+static void netLoop() {
+  if (portal) { wm.process(); if (WiFi.status() == WL_CONNECTED) { portal = false; wm.stopConfigPortal(); } }
+  bool up = WiFi.status() == WL_CONNECTED;
+  if (up && !netUp) netStart();
+  netUp = up;
+  if (netUp) { ArduinoOTA.handle(); web.handleClient(); }
+}
+extern "C" int plat_wifi(char L[4][16]) {
+  if (portal) { snprintf(L[0], 16, "JOIN HOTSPOT"); snprintf(L[1], 16, "VMX-SETUP"); snprintf(L[2], 16, "THEN PICK YOUR"); snprintf(L[3], 16, "NETWORK"); return 4; }
+  if (WiFi.status() == WL_CONNECTED) {
+    snprintf(L[0], 16, "CONNECTED"); snprintf(L[1], 16, "%.15s", WiFi.SSID().c_str()); snprintf(L[2], 16, "%s", WiFi.localIP().toString().c_str());
+    snprintf(L[3], 16, "VMX.LOCAL"); return 4;
+  }
+  if (WiFi.SSID().length()) { snprintf(L[0], 16, "CONNECTING TO"); snprintf(L[1], 16, "%.15s", WiFi.SSID().c_str()); return 2; }
+  snprintf(L[0], 16, "NOT SET UP"); return 1;
+}
+extern "C" void plat_wifi_setup(void) {
+  if (portal) return;
+  wm.setConfigPortalBlocking(false); wm.setConfigPortalTimeout(600); wm.setTitle("VMX");
+  wm.startConfigPortal("VMX-SETUP"); portal = true;
+}
+
+// games: built-in packages, then any uploaded to flash (/games/*.VXP), kept in PSRAM for the session
+static void loadGames() {
+  for (int i = 0; i < NBUILTIN; i++) vmx_add_game(BUILTIN[i].data, BUILTIN[i].len);
+  File d = LittleFS.open("/games"); if (!d) return;
+  for (File f = d.openNextFile(); f; f = d.openNextFile()) {
+    String n = f.name(); if (!n.endsWith(".VXP")) continue;
+    size_t len = f.size(); uint8_t *buf = (uint8_t *)plat_alloc(len);
+    if (buf && f.read(buf, len) == len && vmx_add_game(buf, len) == 0) Serial.printf("game %s (%u bytes)\n", n.c_str(), (unsigned)len);
+    else Serial.printf("game %s: not loaded\n", n.c_str());
+  }
+}
 
 // ------------------------------------------------------------------ the pad (Gamepad3 on the Faces bottom, I2C 0x08)
 enum : uint8_t { P_UP = 0x01, P_DOWN = 0x02, P_LEFT = 0x04, P_RIGHT = 0x08, P_A = 0x10, P_B = 0x20, P_SELECT = 0x40, P_START = 0x80 };
@@ -120,6 +216,9 @@ void setup() {
   M5.Speaker.begin();
   M5.Speaker.setVolume(140);
   drawFrame();
+  if (!LittleFS.begin(true)) Serial.println("LittleFS failed");
+  loadGames();
+  WiFi.mode(WIFI_STA); WiFi.setHostname("vmx"); WiFi.begin();        // the network saved by Wi-Fi setup, if any
   vmx_init();
   Serial.printf("VMX firmware: %d games, PSRAM free %u\n", VMX_NGAMES, (unsigned)ESP.getFreePsram());
 }
@@ -140,6 +239,8 @@ static void serialHook() {
 }
 
 void loop() {
+  netLoop();
+  if (otaBusy) { delay(5); return; }
   M5.update();
   serialHook();
   vmx_frame(millis(), readPad() | serialHeld);

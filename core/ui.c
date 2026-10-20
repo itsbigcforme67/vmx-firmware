@@ -14,8 +14,8 @@
 static uint8_t lcdBuf[64 * 64];
 static Surf lcd = { 64, 64, lcdBuf };
 static const char *MAIN[4] = { "GAMES", "SAVES", "SETTINGS", "CALL" };
-static const char *SETTINGS[3] = { "SOUND", "BRIGHT", "ABOUT" };
-enum { SC_OFF, SC_BOOT, SC_MAIN, SC_GAMES, SC_SAVES, SC_ERASE, SC_SETTINGS, SC_ABOUT, SC_PLAY,
+static const char *SETTINGS[4] = { "SOUND", "BRIGHT", "WIFI", "ABOUT" };
+enum { SC_OFF, SC_BOOT, SC_MAIN, SC_GAMES, SC_SAVES, SC_ERASE, SC_SETTINGS, SC_ABOUT, SC_WIFI, SC_PLAY,
        SC_CALL, SC_CALLHOLD, SC_CALLDIAL, SC_CALLSEND, SC_CALLCODE };
 
 // ---------------------------------------------------------------- state and saves
@@ -187,8 +187,8 @@ static void drawSettings(void) {
   s_clear(&lcd, 0);
   s_pill(&lcd, 2, 1, 60, 9, PILL_FILL, 1); s_centre(&lcd, 3, "SETTINGS", 0);
   const char *BR[3] = { "LOW", "MID", "HIGH" };
-  const char *val[3] = { SET.sound ? "ON" : "OFF", BR[SET.bright % 3], ">" };
-  for (int i = 0; i < 3; i++) { int y = 16 + i * 10, sel = i == S.setSel;
+  const char *val[4] = { SET.sound ? "ON" : "OFF", BR[SET.bright % 3], ">", ">" };
+  for (int i = 0; i < 4; i++) { int y = 14 + i * 10, sel = i == S.setSel;
     if (sel) s_fill(&lcd, 2, y - 2, 60, 9, 1);
     s_text(&lcd, 5, y, SETTINGS[i], !sel); s_text(&lcd, 59 - tw(val[i]), y, val[i], !sel); }
   s_text(&lcd, 2, 59, "A: CHANGE", 1);
@@ -199,6 +199,14 @@ static void drawAbout(void) {
   s_centre(&lcd, 20, "FIRMWARE", 1); s_centre(&lcd, 30, plat_name(), 1);
   char b[16]; snprintf(b, sizeof b, "%d GAMES", VMX_NGAMES); s_centre(&lcd, 38, b, 1);
   s_centre(&lcd, 56, "B: BACK", 1);
+}
+static void drawWifi(void) {             // SETTINGS > WIFI: what the platform says, A = set up
+  s_clear(&lcd, 0);
+  s_pill(&lcd, 2, 1, 60, 9, PILL_FILL, 1); s_centre(&lcd, 3, "WIFI", 0);
+  char L[4][16]; memset(L, 0, sizeof L); int n = plat_wifi(L);
+  if (!n) s_centre(&lcd, 24, "NO WIFI HERE", 1);
+  for (int i = 0; i < n; i++) s_centre(&lcd, 15 + i * 8, L[i], 1);
+  s_text(&lcd, 2, 52, "A: SET UP", 1); s_text(&lcd, 2, 59, "B: BACK", 1);
 }
 static void drawFlash(void) {
   if (!S.flash[0] || S.t - S.flashT > 1.1f) return;
@@ -317,17 +325,19 @@ static void press(int b) {
       if (b == B_B) { backSnd(); go(SC_SAVES); }
       break;
     case SC_SETTINGS:
-      if (b == B_UP) { S.setSel = (S.setSel + 2) % 3; blip(); }
-      if (b == B_DOWN) { S.setSel = (S.setSel + 1) % 3; blip(); }
+      if (b == B_UP) { S.setSel = (S.setSel + 3) % 4; blip(); }
+      if (b == B_DOWN) { S.setSel = (S.setSel + 1) % 4; blip(); }
       if (b == B_A || b == B_LEFT || b == B_RIGHT) {
         if (S.setSel == 0) { SET.sound = !SET.sound; snd_mute(!SET.sound); okSnd(); }
         if (S.setSel == 1) { SET.bright = (uint8_t)((SET.bright + (b == B_LEFT ? 2 : 1)) % 3); blip(); }
-        if (S.setSel == 2 && b == B_A) { okSnd(); go(SC_ABOUT); }
+        if (S.setSel == 2 && b == B_A) { okSnd(); go(SC_WIFI); }
+        if (S.setSel == 3 && b == B_A) { okSnd(); go(SC_ABOUT); }
         saveSet();
       }
       if (b == B_B) { backSnd(); go(SC_MAIN); }
       break;
     case SC_ABOUT: if (b == B_B) { backSnd(); go(SC_SETTINGS); } break;
+    case SC_WIFI: if (b == B_A) { okSnd(); plat_wifi_setup(); } if (b == B_B) { backSnd(); go(SC_SETTINGS); } break;
     case SC_CALL: {
       int c = callRecords();
       if (b == B_UP && S.callSel > 0) { S.callSel--; blip(); }
@@ -361,7 +371,7 @@ static float chase(float cur, float target, int n, float dt) {
   return cur + d * (dt * 14 < 1 ? dt * 14 : 1);
 }
 void vmx_init(void) {
-  xmask_init(); menuGlyphs();
+  games_init(); xmask_init(); menuGlyphs();
   for (int i = 0; i < VMX_NGAMES && i < 16; i++) { ART[i] = (Surf){ 24, 24, artBuf[i] }; VMX_GAMES[i]->art(&ART[i]); }
   plat_load("settings", &SET, sizeof SET); plat_load("recs", RECS, sizeof RECS);
   memset(&S, 0, sizeof S); S.screen = SC_OFF;
@@ -403,6 +413,7 @@ void vmx_frame(uint32_t ms, int held) {
     case SC_ERASE: drawErase(); break;
     case SC_SETTINGS: drawSettings(); break;
     case SC_ABOUT: drawAbout(); break;
+    case SC_WIFI: drawWifi(); break;
     default: drawCall(); break;
   }
   drawFlash();

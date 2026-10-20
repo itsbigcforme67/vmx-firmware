@@ -85,4 +85,4 @@ static void art(void *p) {
   s_line(s, 21, 0, 21, 12, 1); s_fill(s, 7, 7, 4, 4, 1); s_rect(s, 12, 17, 5, 5, 1); s_px(s, 7, 19, 1); s_px(s, 8, 18, 1); s_px(s, 8, 20, 1);
   s_line(s, 0, 23, 23, 23, 1);
 }
-const VmxGame GAME_FOLD = { "fold", "FOLD ROOMS", { "FOLD", "ROOMS" }, 0x56581010, 1, 0, art, start, tick, draw, record };
+VmxGame GAME_FOLD = { "fold", "FOLD ROOMS", { "FOLD", "ROOMS" }, 0x56581010, 1, 0, art, start, tick, draw, record };

@@ -26,6 +26,11 @@ int  plat_load(const char *key, void *buf, int max);       // bytes read, 0 = no
 void plat_save(const char *key, const void *buf, int n);
 int  plat_day(void);                        // days since 15 Nov 2001, or -1 if the clock isn't set
 const char *plat_name(void);                // what ABOUT says the VMX is running on
+int  plat_wifi(char lines[4][16]);          // SETTINGS > WIFI: status lines; returns how many (0 = no Wi-Fi here)
+void plat_wifi_setup(void);                 // SETTINGS > WIFI, A: start Wi-Fi setup
+
+// games in GAME.VXP files (managed code, runtime/vxrt.c): add them before vmx_init (the data must stay put)
+int  vmx_add_game(const uint8_t *vxp, size_t len);   // 0 = added, -1 = not a valid VXP
 
 // a game (core/games.c lists them)
 typedef struct { int held, edges; } VmxIn;
@@ -40,8 +45,9 @@ typedef struct VmxGame {
   const uint8_t *(*draw)(void);
   int  (*record)(VmxRec *r);                // update r from the game; 1 = changed
 } VmxGame;
-extern const VmxGame *const VMX_GAMES[];
-extern const int VMX_NGAMES;
+extern VmxGame *VMX_GAMES[16];
+extern int VMX_NGAMES;
+void games_init(void);                      // the managed games added so far, then the built-in ones
 
 #ifdef __cplusplus
 }

@@ -23,6 +23,8 @@ void plat_save(const char *key, const void *buf, int n) {
 }
 int plat_day(void) { return 400; }
 const char *plat_name(void) { return "PC TEST"; }
+int plat_wifi(char lines[4][16]) { snprintf(lines[0], 16, "PC TEST"); return 1; }
+void plat_wifi_setup(void) {}
 
 static void frame(void) {
   ms += 1000 / 60 + ((ms / 1000 * 60) % 3 == 0);  // ~16.67 ms
@@ -53,6 +55,12 @@ static void wav_hdr(FILE *f, long n) {
 int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "-o") && i + 1 < argc) snprintf(outdir, sizeof outdir, "%s", argv[++i]);
   char p[400]; snprintf(p, sizeof p, "%s/sound.wav", outdir); wav = fopen(p, "wb"); if (wav) fseek(wav, 44, SEEK_SET);
+  for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "-g") && i + 1 < argc) {     // -g GAME.VXP: add a managed game
+    FILE *f = fopen(argv[++i], "rb"); if (!f) { perror(argv[i]); return 1; }
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET); uint8_t *d = malloc((size_t)n);
+    if (fread(d, 1, (size_t)n, f) != (size_t)n) return 1; fclose(f);
+    if (vmx_add_game(d, (size_t)n)) { fprintf(stderr, "%s: not a valid VXP\n", argv[i]); return 1; }
+  }
   vmx_init();
   char line[256], a[64]; int v;
   while (fgets(line, sizeof line, stdin)) {
