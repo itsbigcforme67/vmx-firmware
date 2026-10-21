@@ -1,5 +1,5 @@
 // Managed games: each GAME.VXP the platform adds becomes a VmxGame that runs its CODE chunk in the VMX runtime
-// (runtime/vxrt.c). One game runs at a time, so they share one block of memory (the runtime + a 64 KB heap).
+// (runtime/vxrt.c). One game runs at a time, so they share one block of memory (the runtime + a 128 KB heap).
 // A game error (out of memory, a null reference, an exception) stops the game and shows the message.
 #include "vmxfw.h"
 #include "surf.h"
@@ -9,7 +9,7 @@
 #include <string.h>
 
 #define MAXVX 12
-#define HEAP (64 * 1024)
+#define HEAP (128 * 1024)
 typedef struct {
   VmxGame g; uint32_t id; const uint8_t *code; size_t codeLen; uint8_t card[72];
   char title[16], l1[8], l2[8]; int best, f[3], changed;
@@ -17,6 +17,8 @@ typedef struct {
 static VxGame G[MAXVX]; static int nG;
 static VxGame *cur; static Vx *vm; static void *mem; static size_t memLen;
 static uint8_t scr[4096]; static char err[96];
+static uint32_t statUs, statTicks, statWorstUs, statInstr0;   // speed, for the serial 'i' command
+uint32_t (*vmx_micros)(void);
 
 static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint32_t crc32(const uint8_t *p, size_t n) {
@@ -66,7 +68,9 @@ static void start_(VxGame *g, uint32_t seed, int demo) {
 static void tick_(VxGame *g, const VmxIn *in, int demo) {
   if (err[0] || !vm) return;
   cur = g;
+  uint32_t t0 = vmx_micros ? vmx_micros() : 0;
   if (vx_tick(vm, in->held & 63, in->edges & 63)) { snprintf(err, sizeof err, "%s", vx_error(vm)); g->g.usesB = 0; }
+  if (vmx_micros) { uint32_t us = vmx_micros() - t0; statUs += us; statTicks++; if (us > statWorstUs) statWorstUs = us; }
 }
 static const uint8_t *draw_(VxGame *g) {
   if (!err[0] && vm && vx_draw(vm)) { snprintf(err, sizeof err, "%s", vx_error(vm)); g->g.usesB = 0; }
@@ -125,5 +129,13 @@ int vmx_add_game(const uint8_t *d, size_t len) {
                     FNS[at].art, FNS[at].start, FNS[at].tick, FNS[at].draw, FNS[at].record };
   if (at == nG) nG++;
   return 0;
+}
+// "TICKS n, AVG us, WORST us, INSTR/S n" since the last call (ticks only; draws not counted)
+void vmx_stats_text(char *b, int n) {
+  uint32_t ins = 0; if (vm) vx_stats(vm, &ins, NULL, NULL);
+  snprintf(b, (size_t)n, "%s: %u ticks, avg %u us, worst %u us, %u instructions in all (%u/s while ticking)",
+           cur ? cur->title : "-", (unsigned)statTicks, (unsigned)(statTicks ? statUs / statTicks : 0), (unsigned)statWorstUs,
+           (unsigned)ins, (unsigned)(statUs ? (uint64_t)(ins - statInstr0) * 1000000ull / statUs : 0));
+  statUs = statTicks = statWorstUs = 0; statInstr0 = ins;
 }
 int vx_games(VmxGame **out, int max) { int n = nG < max ? nG : max; for (int i = 0; i < n; i++) out[i] = &G[i].g; return n; }

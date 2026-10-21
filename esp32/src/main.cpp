@@ -13,6 +13,8 @@
 #include <WebServer.h>
 #include "../../core/vmxfw.h"
 #include "games_builtin.h"
+extern "C" uint32_t (*vmx_micros)(void);
+extern "C" void vmx_stats_text(char *b, int n);
 
 // ------------------------------------------------------------------ platform calls for the core
 static Preferences prefs;
@@ -219,6 +221,7 @@ void setup() {
   if (!LittleFS.begin(true)) Serial.println("LittleFS failed");
   loadGames();
   WiFi.mode(WIFI_STA); WiFi.setHostname("vmx"); WiFi.begin();        // the network saved by Wi-Fi setup, if any
+  vmx_micros = []() -> uint32_t { return (uint32_t)micros(); };
   vmx_init();
   Serial.printf("VMX firmware: %d games, PSRAM free %u\n", VMX_NGAMES, (unsigned)ESP.getFreePsram());
 }
@@ -230,6 +233,7 @@ static void serialHook() {
     int c = Serial.read(), b = 0;
     switch (c) { case 'u': b = B_UP; break; case 'd': b = B_DOWN; break; case 'l': b = B_LEFT; break; case 'r': b = B_RIGHT; break;
       case 'a': b = B_A; break; case 'b': b = B_B; break; case 's': case 'S': b = B_SIDE; break;
+      case 'i': { char b[160]; vmx_stats_text(b, sizeof b); Serial.println(b); } break;
       case 'p': { const uint8_t *q = vmx_screen(); for (int y = 0; y < 64; y += 2) { char line[65];
           for (int x = 0; x < 64; x++) line[x] = q[y * 64 + x] || q[(y + 1) * 64 + x] ? '#' : '.'; line[64] = 0; Serial.println(line); }
         Serial.println("--"); } break; }

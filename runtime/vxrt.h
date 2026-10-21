@@ -1,5 +1,5 @@
 // VMX runtime: runs a VMX game image (.vxi, made by sdk/vxlink from a C# 1.0 assembly). Plain C99, no allocation
-// after vx_load, one fixed heap for the game's objects (mark-sweep collected). The same code runs on the VMX
+// after vx_load, one fixed heap (128 KB on the VMX) for the game's objects (mark-sweep collected). The same code runs on the VMX
 // (ESP32-S3), the PC test build, the Xbox simulator and the browser.
 //
 // Image (little-endian, written by sdk/vxlink/Program.cs Linker.Write):
