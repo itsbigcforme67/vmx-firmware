@@ -16,7 +16,7 @@ typedef struct {
   struct { char name[24]; const uint8_t *d; uint32_t n; } files[4]; int nfiles;
 } VxGame;
 static VxGame G[MAXVX]; static int nG;
-static VxGame *cur; static Vx *vm; static void *mem; static size_t memLen;
+static VxGame *cur; static Vx *vm; static void *mem, *heapMem; static size_t memLen;
 static uint8_t scr[4096]; static char err[96];
 static uint32_t statUs, statTicks, statWorstUs, statInstr0;   // speed, for the serial 'i' command
 uint32_t (*vmx_micros)(void);
@@ -68,9 +68,12 @@ static void art_(VxGame *g, void *p) {
 }
 static void start_(VxGame *g, uint32_t seed, int demo) {
   cur = g; err[0] = 0; statInstr0 = 0;
-  size_t need = vx_need(g->code, g->codeLen, HEAP);
-  if (need > memLen) { mem = plat_alloc(need); memLen = mem ? need : 0; }
-  vm = mem ? vx_load(mem, memLen, g->code, g->codeLen, HEAP, &HOST, err, sizeof err) : NULL;
+  // the interpreter's stacks and tables in fast internal RAM if there is room; the game heap in PSRAM
+  if (!heapMem) heapMem = plat_alloc(HEAP + 8);
+  size_t need = vx_need(g->code, g->codeLen, 0) + 64;
+  if (need > memLen) { mem = plat_alloc_fast(need); if (!mem) mem = plat_alloc(need); memLen = mem ? need : 0; }
+  const uint8_t *code = g->code;
+  vm = mem && heapMem ? vx_load_split(mem, memLen, heapMem, HEAP + 8, code, g->codeLen, &HOST, err, sizeof err) : NULL;
   if (!mem) snprintf(err, sizeof err, "NO MEMORY");
   if (vm && vx_start(vm, (int)(seed & 0x7FFFFFFF), demo)) snprintf(err, sizeof err, "%s", vx_error(vm));
   if (vm && !err[0]) g->g.usesB = vx_uses_b(vm);
@@ -148,6 +151,7 @@ int vmx_add_game(const uint8_t *d, size_t len) {
 // "TICKS n, AVG us, WORST us, INSTR/S n" since the last call (ticks only; draws not counted)
 void vmx_stats_text(char *b, int n) {
   uint32_t ins = 0; if (vm) vx_stats(vm, &ins, NULL, NULL);
+  int k = snprintf(b, (size_t)n, "[mem %p heap %p] ", mem, heapMem); b += k; n -= k;
   snprintf(b, (size_t)n, "%s: %u ticks, avg %u us, worst %u us, %u instructions in all (%u/s while ticking)",
            cur ? cur->title : "-", (unsigned)statTicks, (unsigned)(statTicks ? statUs / statTicks : 0), (unsigned)statWorstUs,
            (unsigned)ins, (unsigned)(statUs ? (uint64_t)(ins - statInstr0) * 1000000ull / statUs : 0));

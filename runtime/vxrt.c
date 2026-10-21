@@ -5,6 +5,13 @@
 #include <stdio.h>
 #include <string.h>
 
+// on the ESP32 the interpreter's hot code goes in instruction RAM (flash-cache misses made it several times slower)
+#if defined(ESP_PLATFORM) || defined(ARDUINO)
+#include "esp_attr.h"
+#define VX_HOT IRAM_ATTR
+#else
+#define VX_HOT
+#endif
 #define STACK_SLOTS 2048
 #define MAX_FRAMES 256
 enum { T_NONE, T_I4, T_I8, T_F, T_REF, T_PTR };
@@ -139,14 +146,14 @@ static void gc(Vx *vm) {
 }
 
 // ---------------------------------------------------------------- values
-static void push(Vx *vm, uint8_t tag, Slot v) { if (vm->sp >= STACK_SLOTS) fail(vm, "STACK OVERFLOW%s", NULL); vm->st[vm->sp] = v; vm->tg[vm->sp++] = tag; }
+static VX_HOT void push(Vx *vm, uint8_t tag, Slot v) { if (vm->sp >= STACK_SLOTS) fail(vm, "STACK OVERFLOW%s", NULL); vm->st[vm->sp] = v; vm->tg[vm->sp++] = tag; }
 static void pushI(Vx *vm, int32_t i) { Slot s; s.l = 0; s.i = i; push(vm, T_I4, s); }
 static void pushR(Vx *vm, uint32_t r) { Slot s; s.l = 0; s.u = r; push(vm, T_REF, s); }
 static void pushF(Vx *vm, double f) { Slot s; s.f = f; push(vm, T_F, s); }
 static void pushL(Vx *vm, int64_t l) { Slot s; s.l = l; push(vm, T_I8, s); }
 static uint8_t tagOf(int k) { switch (k) { case VK_I8: case VK_U8: return T_I8; case VK_R4: case VK_R8: return T_F; case VK_REF: return T_REF; case VK_PTR: return T_PTR; default: return T_I4; } }
 // read / write a value of kind k at p (any alignment)
-static void loadK(int k, const uint8_t *p, Slot *v, uint8_t *t) {
+static VX_HOT void loadK(int k, const uint8_t *p, Slot *v, uint8_t *t) {
   v->l = 0; *t = tagOf(k);
   switch (k) {
     case VK_BOOL: case VK_U1: v->i = p[0]; break;
@@ -159,7 +166,7 @@ static void loadK(int k, const uint8_t *p, Slot *v, uint8_t *t) {
     default: memcpy(&v->u, p, 4); break;
   }
 }
-static void storeK(int k, uint8_t *p, Slot v) {
+static VX_HOT void storeK(int k, uint8_t *p, Slot v) {
   switch (k) {
     case VK_BOOL: case VK_U1: case VK_I1: p[0] = (uint8_t)v.i; break;
     case VK_I2: case VK_U2: { uint16_t x = (uint16_t)v.i; memcpy(p, &x, 2); } break;
@@ -170,7 +177,7 @@ static void storeK(int k, uint8_t *p, Slot v) {
   }
 }
 // a slot (local / arg / static) keeps its kind's normal form: small ints truncated, R4 rounded
-static Slot norm(int k, Slot v) {
+static VX_HOT Slot norm(int k, Slot v) {
   Slot o; o.l = 0;
   switch (k) {
     case VK_BOOL: case VK_U1: o.i = (uint8_t)v.i; break; case VK_I1: o.i = (int8_t)v.i; break;
@@ -378,7 +385,13 @@ size_t vx_need(const uint8_t *img, size_t len, size_t heap) {
 }
 static void *carve(uint8_t **p, size_t n) { void *r = *p; *p += (n + 7) & ~(size_t)7; return r; }
 Vx *vx_load(void *mem, size_t memlen, const uint8_t *img, size_t len, size_t heap, const VxHost *host, char *eb, int el) {
-  if (!vx_need(img, len, heap) || memlen < vx_need(img, len, heap)) { snprintf(eb, (size_t)el, "not a VMX image, or too little memory"); return NULL; }
+  size_t small = vx_need(img, len, 0);
+  if (!small || memlen < vx_need(img, len, heap)) { snprintf(eb, (size_t)el, "not a VMX image, or too little memory"); return NULL; }
+  uint8_t *h = (uint8_t *)(((uintptr_t)mem + 7) & ~(uintptr_t)7) + small;
+  return vx_load_split(mem, small, h, heap, img, len, host, eb, el);
+}
+Vx *vx_load_split(void *mem, size_t memlen, void *heapMem, size_t heap, const uint8_t *img, size_t len, const VxHost *host, char *eb, int el) {
+  if (!vx_need(img, len, 0) || memlen < vx_need(img, len, 0) || !heapMem) { snprintf(eb, (size_t)el, "not a VMX image, or too little memory"); return NULL; }
   uint8_t *p = (uint8_t *)(((uintptr_t)mem + 7) & ~(uintptr_t)7);
   Vx *vm = carve(&p, sizeof(Vx)); memset(vm, 0, sizeof *vm); vm->host = host;
   const uint8_t *q = img + 8;
@@ -427,7 +440,7 @@ Vx *vx_load(void *mem, size_t memlen, const uint8_t *img, size_t len, size_t hea
     // a native nobody calls can stay missing; calling it is an error
   }
   vm->markCap = 1024; vm->markStack = carve(&p, vm->markCap * 4);
-  vm->heap = carve(&p, heap); vm->heapSize = (uint32_t)heap; vm->top = 4;
+  vm->heap = (uint8_t *)(((uintptr_t)heapMem + 3) & ~(uintptr_t)3); vm->heapSize = (uint32_t)(heap & ~(size_t)3) - 4; vm->top = 4;
   return vm;
 }
 const char *vx_error(Vx *vm) { return vm->err; }
@@ -440,7 +453,7 @@ static uint32_t ldstr(Vx *vm, uint32_t i) {
   return vm->strRef[i];
 }
 // virtual dispatch: the method the object's type runs for m
-static uint32_t dispatch(Vx *vm, uint32_t m, uint32_t obj) {
+static VX_HOT uint32_t dispatch(Vx *vm, uint32_t m, uint32_t obj) {
   const VxMethod *M = &vm->methods[m];
   if (!(M->flags & MF_VIRTUAL)) return m;
   uint32_t t = isArray(vm, obj) ? vm->tObject : objType(vm, obj);
@@ -453,7 +466,7 @@ static uint32_t dispatch(Vx *vm, uint32_t m, uint32_t obj) {
   return vtAt(vm, T->vtOff + (uint32_t)M->vslot);
 }
 // enter method m with its arguments on top of the eval stack
-static void enter(Vx *vm, uint32_t m, uint32_t pushObj) {
+static VX_HOT void enter(Vx *vm, uint32_t m, uint32_t pushObj) {
   const VxMethod *M = &vm->methods[m];
   uint32_t bp = vm->sp - M->nArgs;
   if (M->flags & MF_NATIVE) {
@@ -478,7 +491,7 @@ static void enter(Vx *vm, uint32_t m, uint32_t pushObj) {
 
 #define POP() (vm->sp--)
 #define TOP (vm->sp - 1)
-static int cmpv(Vx *vm, uint32_t a, uint32_t b, int un) {     // -1 0 1, or 2 for unordered
+static VX_HOT int cmpv(Vx *vm, uint32_t a, uint32_t b, int un) {     // -1 0 1, or 2 for unordered
   uint8_t ta = vm->tg[a], tb = vm->tg[b]; Slot x = vm->st[a], y = vm->st[b];
   if (ta == T_F || tb == T_F) { double p = ta == T_F ? x.f : ta == T_I8 ? (double)x.l : x.i, q = tb == T_F ? y.f : tb == T_I8 ? (double)y.l : y.i;
     if (p != p || q != q) return 2;
@@ -490,9 +503,9 @@ static int cmpv(Vx *vm, uint32_t a, uint32_t b, int un) {     // -1 0 1, or 2 fo
   if (un || ta == T_REF || tb == T_REF) return x.u < y.u ? -1 : x.u > y.u ? 1 : 0;
   return x.i < y.i ? -1 : x.i > y.i ? 1 : 0;
 }
-static int truthy(Vx *vm, uint32_t a) { uint8_t t = vm->tg[a]; Slot v = vm->st[a];
+static VX_HOT int truthy(Vx *vm, uint32_t a) { uint8_t t = vm->tg[a]; Slot v = vm->st[a];
   return t == T_F ? v.f != 0 : t == T_I8 || t == T_PTR ? v.l != 0 : v.u != 0; }
-static void arith(Vx *vm, int op) {        // 0x58 add .. 0x64 shr.un on the top two values
+static VX_HOT void arith(Vx *vm, int op) {        // 0x58 add .. 0x64 shr.un on the top two values
   uint32_t b = TOP, a = TOP - 1; uint8_t ta = vm->tg[a], tb = vm->tg[b]; Slot x = vm->st[a], y = vm->st[b], r; r.l = 0; uint8_t rt = ta;
   if (op >= 0x62) {                                          // shifts: the amount is an int
     int s = y.i;
@@ -527,7 +540,7 @@ static void arith(Vx *vm, int op) {        // 0x58 add .. 0x64 shr.un on the top
   }
   vm->sp--; vm->st[a] = r; vm->tg[a] = rt;
 }
-static void conv(Vx *vm, int k, int fromUnsigned) {        // convert the top value to kind k
+static VX_HOT void conv(Vx *vm, int k, int fromUnsigned) {        // convert the top value to kind k
   uint32_t a = TOP; uint8_t t = vm->tg[a]; Slot v = vm->st[a], r; r.l = 0;
   if (k == VK_R4 || k == VK_R8) {
     double d = t == T_F ? v.f : t == T_I8 ? (fromUnsigned ? (double)v.ul : (double)v.l) : (fromUnsigned ? (double)v.u : (double)v.i);
@@ -543,7 +556,7 @@ static void conv(Vx *vm, int k, int fromUnsigned) {        // convert the top va
     case VK_U2: r.i = (uint16_t)l; break; default: r.i = (int32_t)(uint32_t)(uint64_t)l; break; }
   vm->st[a] = r; vm->tg[a] = T_I4;
 }
-static uint8_t *elemAt(Vx *vm, uint32_t arr, Slot idx, uint8_t it, int *k) {
+static VX_HOT uint8_t *elemAt(Vx *vm, uint32_t arr, Slot idx, uint8_t it, int *k) {
   needObj(vm, arr);
   if (!isArray(vm, arr)) fail(vm, "NOT AN ARRAY%s", NULL);
   int64_t i = it == T_I8 ? idx.l : idx.i;
@@ -556,7 +569,7 @@ static const uint8_t STELEM_K[] = { VK_I4, VK_I1, VK_I2, VK_I4, VK_I8, VK_R4, VK
 static const uint8_t LDIND_K[] = { VK_I1, VK_U1, VK_I2, VK_U2, VK_I4, VK_U4, VK_I8, VK_I4, VK_R4, VK_R8, VK_REF };     // 0x46..0x50
 static const uint8_t STIND_K[] = { VK_REF, VK_I1, VK_I2, VK_I4, VK_I8, VK_R4, VK_R8 };                                // 0x51..0x57
 
-static void run(Vx *vm, int stopAt) {
+static VX_HOT void run(Vx *vm, int stopAt) {
   while (vm->nfr > stopAt) {
     Frame *f = &vm->fr[vm->nfr - 1];
     const VxMethod *M = &vm->methods[f->m];
