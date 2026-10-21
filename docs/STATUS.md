@@ -55,3 +55,8 @@ firmware (`tools/embed_vxp.py`), playable now.
 - Known JS bug kept for parity: INTERCEPT's demo() sort is commented out (microgames/ui/games/intercept_core.js).
 - Remote testing: the VMX's web server has `/hook` (button presses, screen, stats, 'm' memory, 'P' profiler when
   built with -DVX_PROFILE); `tools/drive.py --wifi`. USB serial was lost on 2026-10-21 (cable?); Wi-Fi works.
+
+## 2026-10-21: JUNCTION (Digidrive-style)
+`games/junction/` - JS parity for 30000 ticks; in `make test`; built into the firmware (`tools/embed_vxp.py`), but the
+OTA upload failed: vmx.local was off the network. To flash: `cd esp32 && pio run -e ota -t upload`, or push only the
+game: `tools/push_game.sh build/games/JUNCTION.VXP`. Worst tick ~180k IL (Auto Bahn spiral) = ~25-50 ms on the device.
