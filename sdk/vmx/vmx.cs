@@ -43,10 +43,19 @@ namespace Microsoft.Vmx {
   }
 
   public sealed class Storage {
-    // this game's own save (up to 4 KB), or null
+    // this game's own save (up to 16 KB), or null
     [MethodImpl(MethodImplOptions.InternalCall)] public static extern byte[] Load();
     [MethodImpl(MethodImplOptions.InternalCall)] public static extern void Save(byte[] data);
     // another game's save, read only (gameId as in its GAME.VXP), or null
     [MethodImpl(MethodImplOptions.InternalCall)] public static extern byte[] LoadOther(int gameId);
+  }
+
+  // read-only data files packed into this game's GAME.VXP (tools/vxp.py --file NAME=PATH), read in pieces so a big
+  // file needn't fit in the heap
+  public sealed class Package {
+    // the file's length in bytes, or -1 if the package has no such file
+    [MethodImpl(MethodImplOptions.InternalCall)] public static extern int Length(string name);
+    // copies up to count bytes from offset into dst at index; returns how many were copied
+    [MethodImpl(MethodImplOptions.InternalCall)] public static extern int Read(string name, int offset, byte[] dst, int index, int count);
   }
 }

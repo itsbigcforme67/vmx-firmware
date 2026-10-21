@@ -13,6 +13,7 @@
 typedef struct {
   VmxGame g; uint32_t id; const uint8_t *code; size_t codeLen; uint8_t card[72];
   char title[16], l1[8], l2[8]; int best, f[3], changed;
+  struct { char name[24]; const uint8_t *d; uint32_t n; } files[4]; int nfiles;
 } VxGame;
 static VxGame G[MAXVX]; static int nG;
 static VxGame *cur; static Vx *vm; static void *mem; static size_t memLen;
@@ -40,7 +41,17 @@ static int h_load(int id, uint8_t *buf, int max) {
 }
 static void h_save(const uint8_t *buf, int n) { char key[16]; if (!cur) return; snprintf(key, sizeof key, "g%08x", (unsigned)cur->id); plat_save(key, buf, n); }
 static void h_text(uint8_t *s, int x, int y, const char *t, int on) { Surf S = { 64, 64, s }; s_text(&S, x, y, t, on); }
-static const VxHost HOST = { scr, h_tone, h_report, h_load, h_save, h_text };
+static int h_file(const char *name, int off, uint8_t *dst, int n) {
+  if (!cur) return dst ? 0 : -1;
+  for (int i = 0; i < cur->nfiles; i++) if (!strcmp(cur->files[i].name, name)) {
+    if (!dst) return (int)cur->files[i].n;
+    if (off < 0 || (uint32_t)off >= cur->files[i].n) return 0;
+    if ((uint32_t)n > cur->files[i].n - (uint32_t)off) n = (int)(cur->files[i].n - (uint32_t)off);
+    memcpy(dst, cur->files[i].d + off, (size_t)n); return n;
+  }
+  return dst ? 0 : -1;
+}
+static const VxHost HOST = { scr, h_tone, h_report, h_load, h_save, h_text, h_file };
 
 // ---- the VmxGame calls, for game number n
 static void errorScreen(void) {
@@ -108,6 +119,10 @@ int vmx_add_game(const uint8_t *d, size_t len) {
     if (o + 8 + n > total) return -1;
     if (!memcmp(tag, "CODE", 4)) { g->code = p; g->codeLen = n; }
     else if (!memcmp(tag, "CARD", 4) && n >= 72) memcpy(g->card, p, 72);
+    else if (!memcmp(tag, "FILE", 4) && n >= 1 && p[0] + 1u <= n && g->nfiles < 4) {   // u8 name length, name, data
+      int k = g->nfiles++; snprintf(g->files[k].name, sizeof g->files[k].name, "%.*s", p[0], (const char *)p + 1);
+      g->files[k].d = p + 1 + p[0]; g->files[k].n = n - 1u - p[0];
+    }
     else if (!memcmp(tag, "NAME", 4)) {                     // title \n publisher \n line1|line2 \n blurb
       char tmp[160]; size_t k = n < sizeof tmp - 1 ? n : sizeof tmp - 1; memcpy(tmp, p, k); tmp[k] = 0;
       char *title = tmp, *pub = strchr(title, '\n'); if (pub) *pub++ = 0;

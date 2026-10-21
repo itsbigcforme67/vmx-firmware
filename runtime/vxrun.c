@@ -1,6 +1,6 @@
 // Runs a VMX game image on the PC for tests: Start(seed, demo), then ticks with a press pattern, printing one line per
 // tick: tick number and an FNV-1a hash of the screen after Draw (tools/parity compares these with the JS core).
-//   build/vxrun game.vxi SEED DEMO TICKS [PATTERNSEED] [--pgm N out.pgm]
+//   build/vxrun game.vxi SEED DEMO TICKS [PATTERNSEED] [--pgm N out.pgm] [--file NAME=PATH ...]
 #include "vxrt.h"
 #include "../core/surf.h"
 #include <stdio.h>
@@ -10,6 +10,16 @@
 static uint8_t screen[4096];
 static void text(uint8_t *scr, int x, int y, const char *s, int on) { Surf S = { 64, 64, scr }; s_text(&S, x, y, s, on); }
 static void report(int s, int a, int b, int c) { (void)s; (void)a; (void)b; (void)c; }
+// --file NAME=PATH: a packed data file, as GAME.VXP would carry it
+static struct { char name[32]; uint8_t *d; int n; } files[8]; static int nfiles;
+static int file(const char *name, int off, uint8_t *dst, int n) {
+  for (int i = 0; i < nfiles; i++) if (!strcmp(files[i].name, name)) {
+    if (!dst) return files[i].n;
+    if (off >= files[i].n) return 0; if (n > files[i].n - off) n = files[i].n - off;
+    memcpy(dst, files[i].d + off, (size_t)n); return n;
+  }
+  return dst ? 0 : -1;
+}
 int main(int argc, char **argv) {
   if (argc < 5) { fprintf(stderr, "usage: vxrun game.vxi SEED DEMO TICKS [PATTERNSEED] [--pgm N out.pgm]\n"); return 2; }
   FILE *f = fopen(argv[1], "rb"); if (!f) { perror(argv[1]); return 1; }
@@ -17,7 +27,15 @@ int main(int argc, char **argv) {
   int seed = atoi(argv[2]), demo = atoi(argv[3]), ticks = atoi(argv[4]); unsigned ps = argc > 5 ? (unsigned)atoi(argv[5]) : 1;
   int pgmAt = -1; const char *pgm = NULL;
   for (int i = 1; i < argc - 2; i++) if (!strcmp(argv[i], "--pgm")) { pgmAt = atoi(argv[i + 1]); pgm = argv[i + 2]; }
-  VxHost host = { screen, NULL, report, NULL, NULL, text };
+  for (int i = 1; i < argc - 1; i++) if (!strcmp(argv[i], "--file") && nfiles < 8) {
+    char *eq = strchr(argv[i + 1], '='); if (!eq) continue;
+    snprintf(files[nfiles].name, sizeof files[nfiles].name, "%.*s", (int)(eq - argv[i + 1]), argv[i + 1]);
+    FILE *ff = fopen(eq + 1, "rb"); if (!ff) { perror(eq + 1); return 1; }
+    fseek(ff, 0, SEEK_END); files[nfiles].n = (int)ftell(ff); fseek(ff, 0, SEEK_SET);
+    files[nfiles].d = malloc((size_t)files[nfiles].n); if (fread(files[nfiles].d, 1, (size_t)files[nfiles].n, ff) != (size_t)files[nfiles].n) return 1;
+    fclose(ff); nfiles++;
+  }
+  VxHost host = { screen, NULL, report, NULL, NULL, text, file };
   size_t need = vx_need(img, n, 131072); void *mem = malloc(need); char err[128];
   Vx *vm = vx_load(mem, need, img, n, 131072, &host, err, sizeof err);
   if (!vm) { fprintf(stderr, "load: %s\n", err); return 1; }

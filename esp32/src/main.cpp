@@ -24,11 +24,23 @@ extern "C" void *plat_alloc(size_t n) {
   if (!p) Serial.printf("plat_alloc(%u) failed\n", (unsigned)n);
   return p;
 }
+// firmware settings and records go to NVS; games' own saves (keys "g<id>", up to 16 KB) to files in /saves
 extern "C" int plat_load(const char *key, void *buf, int max) {
+  if (key[0] == 'g') {
+    File f = LittleFS.open(String("/saves/") + key + ".bin", "r"); if (!f) return 0;
+    int n = (int)f.read((uint8_t *)buf, (size_t)max); f.close(); return n;
+  }
   if (!prefs.isKey(key)) return 0;
   return (int)prefs.getBytes(key, buf, (size_t)max);
 }
-extern "C" void plat_save(const char *key, const void *buf, int n) { prefs.putBytes(key, buf, (size_t)n); }
+extern "C" void plat_save(const char *key, const void *buf, int n) {
+  if (key[0] == 'g') {
+    LittleFS.mkdir("/saves");
+    File f = LittleFS.open(String("/saves/") + key + ".bin", "w"); if (f) { f.write((const uint8_t *)buf, (size_t)n); f.close(); }
+    return;
+  }
+  prefs.putBytes(key, buf, (size_t)n);
+}
 extern "C" int plat_day(void) {
   auto dt = M5.Rtc.getDateTime();
   if (dt.date.year < 2001 || dt.date.year > 2100) return -1;

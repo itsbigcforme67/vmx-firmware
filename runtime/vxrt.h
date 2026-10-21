@@ -27,7 +27,11 @@ typedef struct {                     // what the game can reach: the platform fi
   int  (*load)(int gameId, uint8_t *buf, int max);   // gameId 0 = this game; returns bytes, -1 = none
   void (*save)(const uint8_t *buf, int n);
   void (*text)(uint8_t *screen, int x, int y, const char *s, int on);   // the VMX font
+  // a packed data file: copies up to n bytes from offset into dst, returns how many; dst NULL: returns its length
+  // (-1 if there is no such file)
+  int  (*file)(const char *name, int offset, uint8_t *dst, int n);
 } VxHost;
+#define VX_SAVE_MAX 16384
 
 // a runtime in `mem` (it needs vx_need(image) bytes plus the heap); returns NULL with an error in errbuf
 size_t vx_need(const uint8_t *image, size_t len, size_t heap);

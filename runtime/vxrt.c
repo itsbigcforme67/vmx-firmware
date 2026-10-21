@@ -326,7 +326,7 @@ static void n_scrText(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) {
 static void n_tone(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { if (vm->host->tone) vm->host->tone(a[0].i, a[1].i, a[2].i); }
 static void n_report(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { if (vm->host->report) vm->host->report(a[0].i, a[1].i, a[2].i, a[3].i); }
 static void loadSave(Vx *vm, int id, Slot *ret, uint8_t *rt) {
-  static uint8_t buf[4096]; int n = vm->host->load ? vm->host->load(id, buf, sizeof buf) : -1;
+  static uint8_t buf[VX_SAVE_MAX]; int n = vm->host->load ? vm->host->load(id, buf, sizeof buf) : -1;
   if (n < 0) { RET_R(0); return; }
   uint32_t r = newArr(vm, (uint32_t)VK_U1 << 24 | NO_TYPE, n); memcpy(data(vm, r), buf, (size_t)n); RET_R(r);
 }
@@ -334,10 +334,24 @@ static void n_load(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { loadS
 static void n_loadOther(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { loadSave(vm, a[0].i ? a[0].i : -2, ret, rt); }
 static void n_save(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) {
   uint32_t r = a[0].u; if (!r || !vm->host->save) return;
-  uint32_t n = arrLen(vm, r); if (n > 4096) fail(vm, "SAVE BIGGER THAN 4 KB%s", NULL);
+  uint32_t n = arrLen(vm, r); if (n > VX_SAVE_MAX) fail(vm, "SAVE BIGGER THAN 16 KB%s", NULL);
   vm->host->save(data(vm, r), (int)n);
 }
+static void strArg(Vx *vm, uint32_t s, char *b, int n) {     // a string argument as plain ASCII
+  needObj(vm, s); uint32_t l = arrLen(vm, s); if (l > (uint32_t)n - 1) l = (uint32_t)n - 1;
+  for (uint32_t i = 0; i < l; i++) { uint16_t c = strChars(vm, s)[i]; b[i] = c < 128 ? (char)c : '?'; } b[l] = 0;
+}
+static void n_pkgLen(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) {
+  char nm[32]; strArg(vm, a[0].u, nm, sizeof nm); RET_I(vm->host->file ? vm->host->file(nm, 0, NULL, 0) : -1);
+}
+static void n_pkgRead(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) {
+  char nm[32]; strArg(vm, a[0].u, nm, sizeof nm);
+  uint32_t d = a[2].u; int32_t off = a[1].i, idx = a[3].i, n = a[4].i; needObj(vm, d);
+  if (idx < 0 || n < 0 || off < 0 || (uint32_t)(idx + n) > arrLen(vm, d) || (hw(vm, d)[1] >> 24) != VK_U1) fail(vm, "PACKAGE.READ: BAD BUFFER%s", NULL);
+  RET_I(vm->host->file ? vm->host->file(nm, off, data(vm, d) + idx, n) : 0);
+}
 static const struct { const char *name; Native fn; } NATIVES[] = {
+  { "Microsoft.Vmx.Package::Length/1", n_pkgLen }, { "Microsoft.Vmx.Package::Read/5", n_pkgRead },
   { "System.Int32::ToString/0", n_i4ToString }, { "System.UInt32::ToString/0", n_u4ToString }, { "System.Byte::ToString/0", n_u1ToString },
   { "System.Char::ToString/0", n_charToString }, { "System.Array::get_Length/0", n_arrLen }, { "System.Array::Copy/5", n_arrCopy },
   { "System.Array::Clear/3", n_arrClear }, { "System.String::get_Length/0", n_strLen }, { "System.String::get_Chars/1", n_strChar },

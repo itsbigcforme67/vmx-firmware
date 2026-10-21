@@ -15,6 +15,7 @@ $CSC -nologo -nostdlib -noconfig -optimize+ -langversion:ISO-1 -target:library -
   -out:build/$G.dll games/$G/*.cs
 $D build/vxlink/vxlink.dll build/$G.vxi build/sdk/mscorlib.dll build/sdk/Microsoft.Vmx.dll build/$G.dll
 ini() { grep "^$1=" games/$G/game.ini | cut -d= -f2-; }
+FILES=(); while read -r f; do [ -n "$f" ] && FILES+=(--file "$f"); done < <(grep '^file=' games/$G/game.ini | cut -d= -f2- || true)
 T=$(ini title)
 python3 tools/vxp.py pack "build/games/$(echo "$T" | tr -d ' ' | cut -c1-8).VXP" --id "$(ini id)" --title "$T" --lines "$(ini lines)" \
-  --publisher "$(ini publisher)" --blurb "$(ini blurb)" --card games/$G/card.txt --code build/$G.vxi
+  --publisher "$(ini publisher)" --blurb "$(ini blurb)" --card games/$G/card.txt --code build/$G.vxi "${FILES[@]}"
