@@ -17,6 +17,7 @@ typedef struct {
 } VxGame;
 static VxGame G[MAXVX]; static int nG;
 static VxGame *cur; static Vx *vm; static void *mem, *heapMem; static size_t memLen;
+static uint8_t *codeFast; static size_t codeFastLen;   // the running game's image copied into internal RAM (if it fits)
 static uint8_t scr[4096]; static char err[96];
 static uint32_t statUs, statTicks, statWorstUs, statInstr0;   // speed, for the serial 'i' command
 uint32_t (*vmx_micros)(void);
@@ -68,13 +69,10 @@ static void art_(VxGame *g, void *p) {
 }
 static void start_(VxGame *g, uint32_t seed, int demo) {
   cur = g; err[0] = 0; statInstr0 = 0;
-  // the interpreter's stacks and tables in fast internal RAM if there is room; the game heap in PSRAM
-  if (!heapMem) heapMem = plat_alloc(HEAP + 8);
-  size_t need = vx_need(g->code, g->codeLen, 0) + 64;
-  if (need > memLen) { mem = plat_alloc_fast(need); if (!mem) mem = plat_alloc(need); memLen = mem ? need : 0; }
+  if (!mem || !heapMem) { snprintf(err, sizeof err, "NO MEMORY"); g->g.usesB = 0; return; }
   const uint8_t *code = g->code;
+  if (codeFast && g->codeLen <= codeFastLen) { memcpy(codeFast, g->code, g->codeLen); code = codeFast; }
   vm = mem && heapMem ? vx_load_split(mem, memLen, heapMem, HEAP + 8, code, g->codeLen, &HOST, err, sizeof err) : NULL;
-  if (!mem) snprintf(err, sizeof err, "NO MEMORY");
   if (vm && vx_start(vm, (int)(seed & 0x7FFFFFFF), demo)) snprintf(err, sizeof err, "%s", vx_error(vm));
   if (vm && !err[0]) g->g.usesB = vx_uses_b(vm);
   if (err[0]) g->g.usesB = 0;
@@ -151,10 +149,29 @@ int vmx_add_game(const uint8_t *d, size_t len) {
 // "TICKS n, AVG us, WORST us, INSTR/S n" since the last call (ticks only; draws not counted)
 void vmx_stats_text(char *b, int n) {
   uint32_t ins = 0; if (vm) vx_stats(vm, &ins, NULL, NULL);
-  int k = snprintf(b, (size_t)n, "[mem %p heap %p] ", mem, heapMem); b += k; n -= k;
+  int k = snprintf(b, (size_t)n, "[mem %p heap %p code %p] ", mem, heapMem, (void *)codeFast); b += k; n -= k;
   snprintf(b, (size_t)n, "%s: %u ticks, avg %u us, worst %u us, %u instructions in all (%u/s while ticking)",
            cur ? cur->title : "-", (unsigned)statTicks, (unsigned)(statTicks ? statUs / statTicks : 0), (unsigned)statWorstUs,
            (unsigned)ins, (unsigned)(statUs ? (uint64_t)(ins - statInstr0) * 1000000ull / statUs : 0));
   statUs = statTicks = statWorstUs = 0; statInstr0 = ins;
 }
-int vx_games(VmxGame **out, int max) { int n = nG < max ? nG : max; for (int i = 0; i < n; i++) out[i] = &G[i].g; return n; }
+const char *vx_method_name(Vx *vm, int m);
+const char *vmx_method_name(int m) { return vm ? vx_method_name(vm, m) : "?"; }
+// one block for the interpreter (sized for the biggest game) and one for the game heap, made once: fast internal RAM
+// for whichever fits (VX_FAST_HEAP: the heap first; search-heavy games walk their arrays), PSRAM for the other
+static void vx_memory(void) {
+  size_t big = 0; for (int i = 0; i < nG; i++) { size_t n = vx_need(G[i].code, G[i].codeLen, 0) + 64; if (n > big) big = n; }
+  if (!big) return;
+#ifdef VX_FAST_HEAP
+  heapMem = plat_alloc_fast(HEAP + 8); if (!heapMem) heapMem = plat_alloc(HEAP + 8);
+  mem = plat_alloc_fast(big); if (!mem) mem = plat_alloc(big);
+#else
+  mem = plat_alloc_fast(big); if (!mem) mem = plat_alloc(big);
+  heapMem = plat_alloc_fast(HEAP + 8); if (!heapMem) heapMem = plat_alloc(HEAP + 8);
+#endif
+  memLen = mem ? big : 0;
+  size_t bigCode = 0; for (int i = 0; i < nG; i++) if (G[i].codeLen > bigCode && G[i].codeLen <= 48 * 1024) bigCode = G[i].codeLen;
+  codeFast = bigCode ? plat_alloc_fast(bigCode) : NULL; codeFastLen = codeFast ? bigCode : 0;
+}
+int vx_games(VmxGame **out, int max) {
+  if (!mem) vx_memory(); int n = nG < max ? nG : max; for (int i = 0; i < n; i++) out[i] = &G[i].g; return n; }

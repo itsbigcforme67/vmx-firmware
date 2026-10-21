@@ -13,6 +13,10 @@
 #define VX_HOT
 #endif
 #define STACK_SLOTS 2048
+// profiling: the opcode running now (another core samples it; 0x1FE = in a native, 0x1FF = idle). Costs one store.
+volatile uint16_t vx_curop = 0x1FF;
+volatile uint16_t vx_curm = 0xFFFF;              // the method running now (profiling)
+const char *vx_method_name(Vx *vm, int m);
 #define MAX_FRAMES 256
 enum { T_NONE, T_I4, T_I8, T_F, T_REF, T_PTR };
 enum { SP_HEAP = 1, SP_STACK = 2, SP_STATIC = 3 };
@@ -112,7 +116,7 @@ static void markPush(Vx *vm, uint32_t r) {
   if (vm->markCap) vm->markStack[--vm->markCap] = r;
 }
 static void gc(Vx *vm) {
-  vm->gcs++;
+  vm->gcs++; uint16_t was = vx_curop; vx_curop = 0x1FD;
   uint32_t cap = vm->markCap;
   for (uint32_t i = 0; i < vm->sp; i++) {
     if (vm->tg[i] == T_REF) markPush(vm, vm->st[i].u);
@@ -143,6 +147,7 @@ static void gc(Vx *vm) {
     r += sz;
   }
   if (lastFree) vm->top = lastFree;                                        // a free tail goes back to the bump space
+  vx_curop = was;
 }
 
 // ---------------------------------------------------------------- values
@@ -444,6 +449,7 @@ Vx *vx_load_split(void *mem, size_t memlen, void *heapMem, size_t heap, const ui
   return vm;
 }
 const char *vx_error(Vx *vm) { return vm->err; }
+const char *vx_method_name(Vx *vm, int m) { return m >= 0 && (uint32_t)m < vm->nMethods ? vm->names + vm->methods[m].name : "?"; }
 void vx_stats(Vx *vm, uint32_t *i, uint32_t *h, uint32_t *g) { if (i) *i = vm->instrs; if (h) *h = vm->top; if (g) *g = vm->gcs; }
 
 // ---------------------------------------------------------------- the interpreter
@@ -467,12 +473,15 @@ static VX_HOT uint32_t dispatch(Vx *vm, uint32_t m, uint32_t obj) {
 }
 // enter method m with its arguments on top of the eval stack
 static VX_HOT void enter(Vx *vm, uint32_t m, uint32_t pushObj) {
+  vx_curop = 0x1FC;                                    // profiling: in a call
   const VxMethod *M = &vm->methods[m];
   uint32_t bp = vm->sp - M->nArgs;
   if (M->flags & MF_NATIVE) {
     if (!M->native) fail(vm, "MISSING NATIVE %s", mname(vm, m));
     Slot ret; uint8_t rt = T_NONE; ret.l = 0;
+    uint16_t was = vx_curop; vx_curop = 0x1FE;
     M->native(vm, &vm->st[bp], &vm->tg[bp], &ret, &rt);
+    vx_curop = was;
     vm->sp = bp;
     if (M->ret != VK_VOID) push(vm, rt ? rt : tagOf(M->ret), ret);
     if (pushObj) pushR(vm, pushObj);
@@ -573,11 +582,135 @@ static VX_HOT void run(Vx *vm, int stopAt) {
   while (vm->nfr > stopAt) {
     Frame *f = &vm->fr[vm->nfr - 1];
     const VxMethod *M = &vm->methods[f->m];
-    const uint8_t *c = vm->code + M->codeOff, *kinds = vm->kinds + M->kindsOff;
+    const uint8_t *c = vm->code + M->codeOff, *kinds = vm->kinds + M->kindsOff, *lk = kinds + M->nArgs;
     uint32_t ip = f->ip;
+    vx_curm = (uint16_t)f->m;
+    // fast paths: the common cases of the hottest ops, with the stack pointer in a register; anything else (and any
+    // case a fast path doesn't cover) goes to the full switch below, which keeps vm->sp
+    Slot *const st = vm->st; uint8_t *const tg = vm->tg; uint32_t sp = vm->sp;
+    const uint32_t bp = f->bp, lp = f->lp;
+    uint32_t ic = 0;
     for (;;) {
-      vm->instrs++;
+      ic++;
       int op = c[ip++];
+#ifdef VX_PROFILE   // which op is running, for the sampling profiler (esp32 build_flags -DVX_PROFILE)
+      vx_curop = (uint16_t)(op == 0xFE ? 0x100 | c[ip] : op);
+#endif
+      switch (op) {
+        case 0x02: case 0x03: case 0x04: case 0x05: { uint32_t i = bp + (uint32_t)(op - 2); st[sp] = st[i]; tg[sp++] = tg[i]; continue; }
+        case 0x06: case 0x07: case 0x08: case 0x09: { uint32_t i = lp + (uint32_t)(op - 6); st[sp] = st[i]; tg[sp++] = tg[i]; continue; }
+        case 0x0A: case 0x0B: case 0x0C: case 0x0D: { uint32_t n = (uint32_t)(op - 0x0A); int k = lk[n]; sp--;
+          if (k == VK_I4 || k == VK_U4 || k == VK_REF || k == VK_I8 || k == VK_U8 || k == VK_R8) st[lp + n] = st[sp]; else st[lp + n] = norm(k, st[sp]);
+          continue; }
+        case 0x0E: { uint32_t i = bp + c[ip++]; st[sp] = st[i]; tg[sp++] = tg[i]; continue; }
+        case 0x11: { uint32_t i = lp + c[ip++]; st[sp] = st[i]; tg[sp++] = tg[i]; continue; }
+        case 0x13: { uint32_t n = c[ip++]; int k = lk[n]; sp--;
+          if (k == VK_I4 || k == VK_U4 || k == VK_REF || k == VK_I8 || k == VK_U8 || k == VK_R8) st[lp + n] = st[sp]; else st[lp + n] = norm(k, st[sp]);
+          continue; }
+        case 0x14: st[sp].l = 0; tg[sp++] = T_REF; continue;
+        case 0x15: case 0x16: case 0x17: case 0x18: case 0x19: case 0x1A: case 0x1B: case 0x1C: case 0x1D: case 0x1E:
+          st[sp].l = 0; st[sp].i = op - 0x16; tg[sp++] = T_I4; continue;
+        case 0x1F: st[sp].l = 0; st[sp].i = (int8_t)c[ip++]; tg[sp++] = T_I4; continue;
+        case 0x20: st[sp].l = 0; st[sp].i = (int32_t)r32(c + ip); ip += 4; tg[sp++] = T_I4; continue;
+        case 0x25: st[sp] = st[sp - 1]; tg[sp] = tg[sp - 1]; sp++; continue;
+        case 0x26: sp--; continue;
+        case 0x2B: { int8_t d = (int8_t)c[ip++]; ip += d; continue; }
+        case 0x38: { int32_t d = (int32_t)r32(c + ip); ip += 4 + d; continue; }
+        case 0x2C: case 0x2D: case 0x39: case 0x3A: {
+          uint8_t t0 = tg[sp - 1]; if (t0 != T_I4 && t0 != T_REF && t0 != T_I8) break;
+          int32_t d; if (op < 0x38) d = (int8_t)c[ip++]; else { d = (int32_t)r32(c + ip); ip += 4; }
+          sp--; int nz = t0 == T_I8 ? st[sp].ul != 0 : st[sp].u != 0;
+          if (nz == (op == 0x2D || op == 0x3A)) ip += d;
+          continue; }
+        case 0x2E: case 0x2F: case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35: case 0x36: case 0x37:
+        case 0x3B: case 0x3C: case 0x3D: case 0x3E: case 0x3F: case 0x40: case 0x41: case 0x42: case 0x43: case 0x44: {
+          if (tg[sp - 1] != T_I4 || tg[sp - 2] != T_I4) break;
+          int sh = op < 0x38; int32_t d; if (sh) d = (int8_t)c[ip++]; else { d = (int32_t)r32(c + ip); ip += 4; }
+          int k = sh ? op - 0x2E : op - 0x3B; int32_t a = st[sp - 2].i, b = st[sp - 1].i; uint32_t ua = (uint32_t)a, ub = (uint32_t)b; sp -= 2; int take;
+          switch (k) {
+            case 0: take = a == b; break; case 1: take = a >= b; break; case 2: take = a > b; break; case 3: take = a <= b; break;
+            case 4: take = a < b; break; case 5: take = a != b; break; case 6: take = ua >= ub; break; case 7: take = ua > ub; break;
+            case 8: take = ua <= ub; break; default: take = ua < ub; break;
+          }
+          if (take) ip += d;
+          continue; }
+        case 0x58: case 0x59: case 0x5A: case 0x5F: case 0x60: case 0x61: case 0x62: case 0x63: case 0x64: {
+          if (tg[sp - 2] == T_I8 && (tg[sp - 1] == T_I8 || (op >= 0x62 && tg[sp - 1] == T_I4))) {     // 64-bit (bitboards)
+            uint64_t a = st[sp - 2].ul, b = st[sp - 1].ul, r; uint32_t sh = st[sp - 1].u & 63;
+            switch (op) { case 0x58: r = a + b; break; case 0x59: r = a - b; break; case 0x5A: r = a * b; break;
+              case 0x5F: r = a & b; break; case 0x60: r = a | b; break; case 0x61: r = a ^ b; break;
+              case 0x62: r = a << sh; break; case 0x63: r = (uint64_t)((int64_t)a >> sh); break; default: r = a >> sh; break; }
+            sp--; st[sp - 1].ul = r; continue;
+          }
+          if (tg[sp - 1] != T_I4 || tg[sp - 2] != T_I4) break;
+          uint32_t a = st[sp - 2].u, b = st[sp - 1].u, r;
+          switch (op) { case 0x58: r = a + b; break; case 0x59: r = a - b; break; case 0x5A: r = a * b; break;
+            case 0x5F: r = a & b; break; case 0x60: r = a | b; break; case 0x61: r = a ^ b; break;
+            case 0x62: r = a << (b & 31); break; case 0x63: r = (uint32_t)((int32_t)a >> (b & 31)); break; default: r = a >> (b & 31); break; }
+          sp--; st[sp - 1].l = 0; st[sp - 1].u = r; continue; }
+        case 0x5B: case 0x5D: {
+          if (tg[sp - 1] != T_I4 || tg[sp - 2] != T_I4) break;
+          int32_t a = st[sp - 2].i, b = st[sp - 1].i; if (b == 0 || b == -1) break;
+          sp--; st[sp - 1].l = 0; st[sp - 1].i = op == 0x5B ? a / b : a % b; continue; }
+        case 0x69: if (tg[sp - 1] == T_I8) { int32_t x = (int32_t)(uint32_t)st[sp - 1].ul; st[sp - 1].l = 0; st[sp - 1].i = x; tg[sp - 1] = T_I4; continue; }
+          if (tg[sp - 1] != T_I4) break; continue;                                                   // conv.i4
+        case 0x6A: if (tg[sp - 1] != T_I4) break; st[sp - 1].l = (int64_t)st[sp - 1].i; tg[sp - 1] = T_I8; continue;   // conv.i8
+        case 0x6E: if (tg[sp - 1] != T_I4) break; st[sp - 1].ul = (uint64_t)st[sp - 1].u; tg[sp - 1] = T_I8; continue; // conv.u8
+        case 0x21: st[sp].ul = (uint64_t)r32(c + ip) | (uint64_t)r32(c + ip + 4) << 32; ip += 8; tg[sp++] = T_I8; continue;
+        case 0xD2: if (tg[sp - 1] != T_I4) break; st[sp - 1].i = (uint8_t)st[sp - 1].i; continue;   // conv.u1
+        case 0xD1: if (tg[sp - 1] != T_I4) break; st[sp - 1].i = (uint16_t)st[sp - 1].i; continue;  // conv.u2
+        case 0x67: if (tg[sp - 1] != T_I4) break; st[sp - 1].i = (int8_t)st[sp - 1].i; continue;    // conv.i1
+        case 0x68: if (tg[sp - 1] != T_I4) break; st[sp - 1].i = (int16_t)st[sp - 1].i; continue;   // conv.i2
+        case 0x7B: {                                                                                 // ldfld
+          uint32_t o = st[sp - 1].u; if (tg[sp - 1] != T_REF || !o) break;
+          uint32_t d = r32(c + ip); int k = (int)(d >> 16); const uint8_t *p = vm->heap + o + HDR + (d & 0xFFFF);
+          if (k == VK_I4 || k == VK_U4 || k == VK_REF) { st[sp - 1].l = 0; memcpy(&st[sp - 1].u, p, 4); tg[sp - 1] = k == VK_REF ? T_REF : T_I4; }
+          else if (k == VK_BOOL || k == VK_U1) { st[sp - 1].l = 0; st[sp - 1].i = p[0]; tg[sp - 1] = T_I4; }
+          else break;
+          ip += 4; continue; }
+        case 0x7D: {                                                                                 // stfld
+          uint32_t o = st[sp - 2].u; if (tg[sp - 2] != T_REF || !o) break;
+          uint32_t d = r32(c + ip); int k = (int)(d >> 16); uint8_t *p = vm->heap + o + HDR + (d & 0xFFFF);
+          if (k == VK_I4 || k == VK_U4 || k == VK_REF) memcpy(p, &st[sp - 1].u, 4);
+          else if (k == VK_BOOL || k == VK_U1 || k == VK_I1) p[0] = (uint8_t)st[sp - 1].i;
+          else break;
+          ip += 4; sp -= 2; continue; }
+        case 0x7E: { uint32_t i = r32(c + ip); ip += 4; st[sp] = vm->statics[i]; tg[sp++] = vm->staticTags[i]; continue; }
+        case 0x8E: { uint32_t a = st[sp - 1].u; if (tg[sp - 1] != T_REF || !a) break;
+          st[sp - 1].l = 0; st[sp - 1].u = hw(vm, a)[2]; tg[sp - 1] = T_I4; continue; }
+        case 0x90: case 0x91: case 0x94: case 0x95: case 0x9A: {                                    // ldelem i1 u1 i4 u4 ref
+          uint32_t a = st[sp - 2].u; if (tg[sp - 2] != T_REF || !a || tg[sp - 1] != T_I4) break;
+          const uint32_t *h = hw(vm, a); uint32_t i = st[sp - 1].u; if (!(h[0] & F_ARRAY) || i >= h[2]) break;
+          int k = (int)(h[1] >> 24); const uint8_t *p = vm->heap + a + HDR;
+          if (op >= 0x94 && (k == VK_I4 || k == VK_U4 || k == VK_REF)) { sp--; st[sp - 1].l = 0; memcpy(&st[sp - 1].u, p + 4 * i, 4); tg[sp - 1] = k == VK_REF ? T_REF : T_I4; continue; }
+          if (op < 0x94 && (k == VK_U1 || k == VK_BOOL || k == VK_I1)) { int v8 = (k == VK_I1 || op == 0x90) ? (int8_t)p[i] : p[i];
+            if (op == 0x91 && k == VK_I1) v8 = p[i];
+            sp--; st[sp - 1].l = 0; st[sp - 1].i = v8; tg[sp - 1] = T_I4; continue; }
+          break; }
+        case 0x9C: case 0x9E: case 0xA2: {                                                          // stelem i1 i4 ref
+          uint32_t a = st[sp - 3].u; if (tg[sp - 3] != T_REF || !a || tg[sp - 2] != T_I4) break;
+          const uint32_t *h = hw(vm, a); uint32_t i = st[sp - 2].u; if (!(h[0] & F_ARRAY) || i >= h[2]) break;
+          int k = (int)(h[1] >> 24); uint8_t *p = vm->heap + a + HDR;
+          if (k == VK_I4 || k == VK_U4 || k == VK_REF) memcpy(p + 4 * i, &st[sp - 1].u, 4);
+          else if (k == VK_U1 || k == VK_BOOL || k == VK_I1) p[i] = (uint8_t)st[sp - 1].i;
+          else break;
+          sp -= 3; continue; }
+        case 0xFE: {
+          int op2 = c[ip];
+          if (op2 >= 0x01 && op2 <= 0x05 && tg[sp - 1] == T_I8 && tg[sp - 2] == T_I8) {
+            int64_t a = st[sp - 2].l, b = st[sp - 1].l; uint64_t ua = (uint64_t)a, ub = (uint64_t)b; int r;
+            switch (op2) { case 0x01: r = a == b; break; case 0x02: r = a > b; break; case 0x03: r = ua > ub; break; case 0x04: r = a < b; break; default: r = ua < ub; break; }
+            ip++; sp--; st[sp - 1].l = 0; st[sp - 1].i = r; tg[sp - 1] = T_I4; continue;
+          }
+          if (op2 >= 0x01 && op2 <= 0x05 && tg[sp - 1] == tg[sp - 2] && (tg[sp - 1] == T_I4 || (tg[sp - 1] == T_REF && op2 == 0x01))) {
+            int32_t a = st[sp - 2].i, b = st[sp - 1].i; uint32_t ua = (uint32_t)a, ub = (uint32_t)b; int r;
+            switch (op2) { case 0x01: r = a == b; break; case 0x02: r = a > b; break; case 0x03: r = ua > ub; break; case 0x04: r = a < b; break; default: r = ua < ub; break; }
+            ip++; sp--; st[sp - 1].l = 0; st[sp - 1].i = r; tg[sp - 1] = T_I4; continue;
+          }
+          break; }
+        default: break;
+      }
+      vm->sp = sp; vm->instrs += ic; ic = 0;                        // the full switch (counts flushed: it may leave)
       Slot v; uint8_t t;
       switch (op) {
         case 0x00: break;
@@ -765,6 +898,7 @@ static VX_HOT void run(Vx *vm, int stopAt) {
         } break;
         default: { char b[8]; snprintf(b, sizeof b, "%02X", op); fail(vm, "BAD OP %s", b); }
       }
+      sp = vm->sp;
     }
   next_frame:;
   }
@@ -775,6 +909,7 @@ static void invoke(Vx *vm, uint32_t m) {
   int depth = vm->nfr;
   enter(vm, m, 0);
   run(vm, depth);
+  vx_curop = 0x1FF;
 }
 static int guard(Vx *vm) { if (vm->err[0]) return -1; return 0; }
 static int startup(Vx *vm) {             // static constructors, then the game object and the screen

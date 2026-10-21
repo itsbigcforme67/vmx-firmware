@@ -12,6 +12,7 @@ static uint32_t ms;
 static int held;
 static FILE *wav; static long wavN;
 
+void *plat_alloc_fast(size_t n) { return calloc(1, n); }
 void *plat_alloc(size_t n) { void *p = calloc(1, n); if (!p) { fprintf(stderr, "out of memory\n"); exit(1); } return p; }
 int plat_load(const char *key, void *buf, int max) {
   char p[400]; snprintf(p, sizeof p, "%s/save_%s.bin", outdir, key);

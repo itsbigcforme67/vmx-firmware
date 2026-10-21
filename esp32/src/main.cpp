@@ -16,6 +16,12 @@
 #include "games_builtin.h"
 extern "C" uint32_t (*vmx_micros)(void);
 extern "C" void vmx_stats_text(char *b, int n);
+extern "C" volatile uint16_t vx_curop, vx_curm;
+extern "C" const char *vmx_method_name(int m);
+static uint32_t profM[1024];
+// sampling profiler on core 0: which IL op is running (hook letters 'P' start/stop+print)
+static volatile bool profOn = false; static uint32_t profHist[0x200];
+static void profTask(void *) { for (;;) { if (profOn) { profHist[vx_curop & 0x1FF]++; if (vx_curop != 0x1FF) profM[vx_curm & 1023]++; vTaskDelay(1); } else vTaskDelay(10); } }
 
 // ------------------------------------------------------------------ platform calls for the core
 static Preferences prefs;
@@ -27,7 +33,7 @@ extern "C" void *plat_alloc(size_t n) {
 }
 // firmware settings and records go to NVS; games' own saves (keys "g<id>", up to 16 KB) to files in /saves
 extern "C" void *plat_alloc_fast(size_t n) {
-  if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < n + 24 * 1024) return NULL;   // leave Wi-Fi room
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < n + 50 * 1024 || heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < n) return NULL;   // leave Wi-Fi 50 KB
   return heap_caps_calloc(1, n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 extern "C" int plat_load(const char *key, void *buf, int max) {
@@ -150,6 +156,7 @@ void setup() {
   if (!LittleFS.begin(true)) Serial.println("LittleFS failed");
   loadGames();
   WiFi.mode(WIFI_STA); WiFi.setHostname("vmx"); WiFi.begin();        // the network saved by Wi-Fi setup, if any
+  xTaskCreatePinnedToCore(profTask, "prof", 2048, NULL, 1, NULL, 0);
   vmx_micros = []() -> uint32_t { return (uint32_t)micros(); };
   vmx_init();
   Serial.printf("VMX firmware: %d games, PSRAM free %u, internal free %u (largest block %u)\n", VMX_NGAMES, (unsigned)ESP.getFreePsram(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
@@ -165,6 +172,14 @@ static void hookCommand(int c, Print &out) {
     switch (c) { case 'u': b = B_UP; break; case 'd': b = B_DOWN; break; case 'l': b = B_LEFT; break; case 'r': b = B_RIGHT; break;
       case 'a': b = B_A; break; case 'b': b = B_B; break; case 's': case 'S': b = B_SIDE; break;
       case 'i': { char b[200]; vmx_stats_text(b, sizeof b); out.println(b); } break;
+      case 'P':
+        if (!profOn) { memset(profHist, 0, sizeof profHist); memset(profM, 0, sizeof profM); profOn = true; out.println("profiling"); }
+        else { profOn = false; uint32_t tot = 0; for (int i = 0; i < 0x200; i++) tot += profHist[i];
+          for (int k = 0; k < 14; k++) { int bi = 0; for (int i = 0; i < 0x200; i++) if (profHist[i] > profHist[bi]) bi = i;
+            if (!profHist[bi]) break; out.printf("op %03X %5.1f%%\n", bi, 100.0 * profHist[bi] / (tot ? tot : 1)); profHist[bi] = 0; }
+          for (int k = 0; k < 10; k++) { int bi = 0; for (int i = 0; i < 1024; i++) if (profM[i] > profM[bi]) bi = i;
+            if (!profM[bi]) break; out.printf("m %5.1f%% %s\n", 100.0 * profM[bi] / (tot ? tot : 1), vmx_method_name(bi)); profM[bi] = 0; } }
+        break;
       case 'm': out.printf("internal free %u largest %u, PSRAM free %u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), (unsigned)ESP.getFreePsram()); break;
       case 'p': { const uint8_t *q = vmx_screen(); for (int y = 0; y < 64; y += 2) { char line[65];

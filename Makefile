@@ -6,7 +6,7 @@ build/vmxhost: $(SRC) host/main.c core/*.h runtime/*.h
 	mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRC) host/main.c -lm
 test: build/vmxhost build/vxrun
-	bash tools/host_test.sh
+	for g in blox blobs intercept invasion blackjack checkers reversi tricky zork; do tools/parity/check.sh $$g 3000 || exit 1; done
 .PHONY: test
 build/vxrun: runtime/vxrun.c runtime/vxrt.c runtime/vxrt.h core/surf.c
 	$(CC) $(CFLAGS) -o $@ runtime/vxrun.c runtime/vxrt.c core/surf.c -lm

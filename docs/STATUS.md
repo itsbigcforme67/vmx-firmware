@@ -33,3 +33,25 @@ Owner: VMX games are managed code on a small Microsoft .NET runtime (vmx-world/d
   192.168.1.177 / vmx.local. SETTINGS > WIFI shows status; A opens hotspot "VMX-SETUP" (WiFiManager) to change
   network. Firmware: `cd esp32 && pio run -e ota -t upload` (tested). Games: `tools/push_game.sh FILE.VXP`
   (tested; it restarts with the game). Password in esp32/ota_secret.ini (gitignored).
+
+## 2026-10-21: all the simulator's games on the VMX runtime
+
+Ported to C# by parallel helpers, each checked frame for frame against its JS core (`make test` runs all 9):
+BLOX, BLOBS, INTERCEPT, INVASION, BLACKJACK AND HOOKERS, CHECKERS, REVERSI, TRICKY WICKS (from the owner's C core in
+the v1.5 zip), ZORK I (Z-machine; story packed as a FILE chunk, SAVE to Storage, 16 KB). Not ported: STAR RAIDERS
+(needs the player's cart + a 6502; rights). FOLD ROOMS stays built-in C. All 9 + FOLD are built into the CoreS3
+firmware (`tools/embed_vxp.py`), playable now.
+- Runtime additions: 128 KB heap (owner), `Microsoft.Vmx.Package` (packed data files), saves up to 16 KB (CoreS3:
+  LittleFS /saves), fast paths in the interpreter (int and 64-bit ops, locals, fields, arrays, branches), the hot
+  loop in IRAM, interpreter state + bytecode in internal RAM. Per-game parity args: games/NAME/parity_args.
+- Speed on the ESP32-S3 (device stats, `tools/drive.py --wifi "i"`): 3.4-7 M IL instructions a second for most
+  games (BLOX/TRICKY/BLACKJACK look faster because their ticks are light). Earlier "18 M/s" was BLOX-only and
+  misleading. The helpers sized the CPU players' per-tick slices for ~400k IL, so on the device a CPU turn in
+  CHECKERS / REVERSI has ticks up to ~130 ms (a few dropped frames), and BLOBS's DEMO planner up to ~0.7 s once per
+  pair. Normal play is light everywhere. Memory placement (internal vs PSRAM) made no difference; the cost is the
+  interpreter itself (~70 cycles an IL op).
+- Next for speed (not done): translate IL at load into a compact pre-decoded form (resolved operands, 32-bit slots,
+  computed-goto dispatch); expected 2-3x. Then lower the CPU players' slices.
+- Known JS bug kept for parity: INTERCEPT's demo() sort is commented out (microgames/ui/games/intercept_core.js).
+- Remote testing: the VMX's web server has `/hook` (button presses, screen, stats, 'm' memory, 'P' profiler when
+  built with -DVX_PROFILE); `tools/drive.py --wifi`. USB serial was lost on 2026-10-21 (cable?); Wi-Fi works.

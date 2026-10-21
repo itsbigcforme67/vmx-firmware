@@ -22,6 +22,7 @@ void vmx_audio(int16_t *out, int n);        // the next n samples (mono, VMX_RAT
 
 // provided by the platform
 void *plat_alloc(size_t n);                 // big, long-lived buffers (PSRAM on the CoreS3)
+void *plat_alloc_fast(size_t n);            // small, busy buffers: fast internal RAM if there is room (else NULL)
 int  plat_load(const char *key, void *buf, int max);       // bytes read, 0 = none
 void plat_save(const char *key, const void *buf, int n);
 int  plat_day(void);                        // days since 15 Nov 2001, or -1 if the clock isn't set

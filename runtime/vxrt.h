@@ -36,6 +36,9 @@ typedef struct {                     // what the game can reach: the platform fi
 // a runtime in `mem` (it needs vx_need(image) bytes plus the heap); returns NULL with an error in errbuf
 size_t vx_need(const uint8_t *image, size_t len, size_t heap);
 Vx *vx_load(void *mem, size_t memlen, const uint8_t *image, size_t len, size_t heap, const VxHost *host, char *errbuf, int errlen);
+// the same with the game heap in its own block: `mem` (vx_need(image, len, 0) bytes: the interpreter's stacks and
+// tables) can then go in fast internal RAM while the heap goes in big, slower RAM (PSRAM on the ESP32-S3)
+Vx *vx_load_split(void *mem, size_t memlen, void *heap, size_t heaplen, const uint8_t *image, size_t len, const VxHost *host, char *errbuf, int errlen);
 // the game's calls; each returns 0, or -1 after a game error (vx_error says what; the game is stopped)
 int vx_start(Vx *vm, int seed, int demo);
 int vx_tick(Vx *vm, int held, int pressed);
