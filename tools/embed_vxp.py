@@ -1,8 +1,9 @@
 """Built-in games for the CoreS3 firmware: build/games/*.VXP -> esp32/src/games_builtin.h (games uploaded over Wi-Fi
-to the device's flash are added on top, and replace a built-in copy of the same game).   python3 tools/embed_vxp.py"""
-import glob, os
+to the device's flash are added on top, and replace a built-in copy of the same game).
+   python3 tools/embed_vxp.py [NAME.VXP ...]      (no names: every VXP in build/games)"""
+import glob, os, sys
 root = os.path.join(os.path.dirname(__file__), "..")
-files = sorted(glob.glob(os.path.join(root, "build/games/*.VXP")))
+files = [os.path.join(root, "build/games", n) for n in sys.argv[1:]] or sorted(glob.glob(os.path.join(root, "build/games/*.VXP")))
 out = ["// made by tools/embed_vxp.py from build/games/*.VXP; don't edit", "#include <stdint.h>", "#include <stddef.h>"]
 for i, f in enumerate(files):
     d = open(f, "rb").read()

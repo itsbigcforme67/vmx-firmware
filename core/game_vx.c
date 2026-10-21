@@ -67,7 +67,7 @@ static void art_(VxGame *g, void *p) {
   for (int y = 0; y < 24; y++) for (int x = 0; x < 24; x++) s_px(s, x, y, (g->card[y * 3 + x / 8] >> (7 - x % 8)) & 1);
 }
 static void start_(VxGame *g, uint32_t seed, int demo) {
-  cur = g; err[0] = 0;
+  cur = g; err[0] = 0; statInstr0 = 0;
   size_t need = vx_need(g->code, g->codeLen, HEAP);
   if (need > memLen) { mem = plat_alloc(need); memLen = mem ? need : 0; }
   vm = mem ? vx_load(mem, memLen, g->code, g->codeLen, HEAP, &HOST, err, sizeof err) : NULL;
