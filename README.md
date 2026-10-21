@@ -8,6 +8,8 @@ settings, the phone score call, and the games. It follows the web simulator (POC
 - `host/` + `Makefile`: the PC test build. `make`, then `build/vmxhost -o OUTDIR < script` writes screenshots and a WAV.
 - `esp32/`: the M5Stack CoreS3 + Faces Bottom3 + Gamepad3 test rig (the VMX's chip, ESP32-S3).
   `cd esp32 && pio run -t upload --upload-port /dev/ttyACM0`
+- Games: `tools/build_game.sh NAME` (C# in games/NAME -> build/games/NAME.VXP), `tools/parity/check.sh NAME` (same screens
+  as the JS core), `python3 tools/embed_vxp.py A.VXP B.VXP ...` (the firmware's built-in games; run before building esp32/).
 - `tools/embed_levels.py` builds FOLD's levels into the firmware; `tools/drive.py` presses buttons and prints the
   screen over USB serial.
 

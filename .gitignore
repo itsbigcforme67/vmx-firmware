@@ -1,3 +1,4 @@
 build/
 esp32/.pio/
 esp32/ota_secret.ini
+esp32/src/games_builtin.h
