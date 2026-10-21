@@ -10,6 +10,10 @@
 //   (while the last move's discs flip and during the 20-tick thinking wait) and runs a slice of work each tick. On the
 //   tick the JS plays the move it finishes whatever is left, then draws the random numbers in the JS order, so the
 //   move appears on the same tick with the same choice.
+// - each candidate after the first is only searched far enough to show whether it can beat the best so far (the
+//   tie-break randoms are known when the search starts); the chosen move is provably the JS's (see RootResult).
+// - while you think, the CPU searches its reply to each of your legal moves (Speculate), so it's usually done already.
+// - QUOTA keeps a tick near 400k IL (the ESP32-S3 interprets ~18M IL/s; a tick is 33 ms).
 using System;
 using Microsoft.Vmx;
 
@@ -17,13 +21,12 @@ public class Reversi : Game {
   const int SQ = 7, BX = 3, BY = 0;
   const int INF = 1000000000;                    // the JS core's 1e9
   const int DEPTH = 4;                           // bestMove's depth
-  const int QUOTA = 3000;                        // search work a tick (units below; ~100 IL each): ~300k IL + Draw
-  const int W_LEAF = 12, W_NODE = 6;             // work units: a scored leaf, a searched node
+  const int QUOTA = 4600;                        // search work a tick (units below): ~360k IL, plus Step and Draw
+  const int W_LEAF = 16, W_NODE = 10;           // work units (~78 IL each): a scored leaf, a searched node
   const ulong NOTA = 0xFEFEFEFEFEFEFEFEUL, NOTH = 0x7F7F7F7F7F7F7F7FUL;
   static readonly int[] WEIGHT = { 120, -20, 20, 5, 5, 20, -20, 120, -20, -40, -5, -5, -5, -5, -40, -20, 20, -5, 15, 3, 3, 15, -5, 20,
     5, -5, 3, 3, 3, 3, -5, 5, 5, -5, 3, 3, 3, 3, -5, 5, 20, -5, 15, 3, 3, 15, -5, 20, -20, -40, -5, -5, -5, -5, -40, -20,
     120, -20, 20, 5, 5, 20, -20, 120 };
-  static readonly int[] DISC1 = { 6, 15, 15, 6 }, DISC2 = { 6, 9, 9, 6 };   // 4 rows of 4 bits (bit 3 = column 0)
 
   int[] rowW = new int[8 * 256];                 // rowW[r * 256 + byte]: WEIGHT summed over row r's discs
   int[] lowIdx = new int[64];                    // de Bruijn: index of a single bit
@@ -59,7 +62,7 @@ public class Reversi : Game {
     rs = seed; t = 0;
     G1 = (1UL << 28) | (1UL << 35); G2 = (1UL << 27) | (1UL << 36);
     turn = 1; curR = 2; curC = 3; nFlips = 0; msg = ""; msgT = 0; over = 0; think = 0;
-    jobState = 0;
+    jobState = 0; jobFor = -1; specDone = 0;
   }
 
   // ---- bitboard rules
@@ -114,11 +117,32 @@ public class Reversi : Game {
   int[] fSide = new int[PLIES], fDepth = new int[PLIES], fA = new int[PLIES], fB = new int[PLIES], fBest = new int[PLIES];
   bool[] fPass = new bool[PLIES];
   int sp, retVal, work; bool haveRet;
-  int jobState, jobSide; ulong rootRem; int rootN; int[] rootI = new int[64], rootV = new int[64];
+  int jobState, jobSide; ulong rootRem; int rootN; int[] rootI = new int[64];
+  // bestMove's tie-break: v = (side 1 ? -search : search) + rnd() * 4, the best v wins (the first on a tie). Nothing
+  // else draws random numbers before the move, so the job knows each candidate's rnd() * 4 up front (rk) and, after the
+  // first candidate, only has to show whether a candidate can beat the best v so far: it searches with a window that
+  // starts at the highest score that can't (curT); a fail-low (an upper bound <= curT) means it can't win, and anything
+  // above curT is exact (alpha-beta), so the chosen move is the JS's.
+  double[] rk = new double[64]; double jobBestV; int jobBestI, curT;
 
-  void StartJob() {
-    jobSide = turn; rootRem = turn == 1 ? Mob(G1, G2) : Mob(G2, G1);
-    rootN = 0; sp = -1; haveRet = false; jobState = 1;
+  ulong J1, J2;                                  // the job's position
+  int jobFor = -1;                               // -1: the real move; else the human move it's speculating on
+  void StartJob() { StartJobAt(G1, G2, turn, -1); }
+  void StartJobAt(ulong j1, ulong j2, int side, int forMove) {
+    J1 = j1; J2 = j2; jobFor = forMove;
+    jobSide = side; rootRem = side == 1 ? Mob(j1, j2) : Mob(j2, j1);
+    rootN = 0; sp = -1; haveRet = false; jobState = 1; jobBestI = -1; jobBestV = 0;
+    uint x = rs; int n = Pop(rootRem);
+    for (int k = 0; k < n; k++) { x = x * 1664525u + 1013904223u; rk[k] = x / 4294967296.0 * 4; }
+  }
+  // a candidate's result: s from search() (from side 2's view), exact unless it failed outside the window
+  void RootResult(int s) {
+    int k = rootN - 1; int u;
+    if (jobBestI < 0) u = jobSide == 1 ? -s : s;           // the first: full window, exact
+    else if (jobSide == 2) { if (s <= curT) return; u = s; }
+    else { if (s >= -curT) return; u = -s; }
+    double v = u + rk[k];
+    if (jobBestI < 0 || v > jobBestV) { jobBestI = rootI[k]; jobBestV = v; }
   }
   void Enter(int ply, int side, int depth, int a, int b) {
     ulong p1 = B1[ply], p2 = B2[ply];
@@ -159,12 +183,20 @@ public class Reversi : Game {
   void Work(int limit) {
     while (work < limit) {
       if (sp < 0) {
-        if (haveRet) { haveRet = false; rootV[rootN - 1] = retVal; }
+        if (haveRet) { haveRet = false; RootResult(retVal); }
         if (rootRem == 0) { jobState = 2; return; }
         ulong low = rootRem & (~rootRem + 1); rootRem ^= low; rootI[rootN++] = Low(low);
-        if (jobSide == 1) { ulong f = Flips(G1, G2, low); B1[0] = G1 | f | low; B2[0] = G2 & ~f; }
-        else { ulong f = Flips(G2, G1, low); B2[0] = G2 | f | low; B1[0] = G1 & ~f; }
-        Enter(0, 3 - jobSide, DEPTH - 1, -INF, INF);
+        if (jobSide == 1) { ulong f = Flips(J1, J2, low); B1[0] = J1 | f | low; B2[0] = J2 & ~f; }
+        else { ulong f = Flips(J2, J1, low); B2[0] = J2 | f | low; B1[0] = J1 & ~f; }
+        if (jobBestI < 0) Enter(0, 3 - jobSide, DEPTH - 1, -INF, INF);
+        else {
+          // curT: the highest integer u with u + rk <= the best v so far (u = the candidate's score, side's view)
+          double r = rk[rootN - 1]; int T = (int)Math.Floor(jobBestV - r);
+          while ((double)(T + 1) + r <= jobBestV) T++;
+          while ((double)T + r > jobBestV) T--;
+          curT = T;
+          if (jobSide == 2) Enter(0, 1, DEPTH - 1, T, INF); else Enter(0, 2, DEPTH - 1, -INF, -T);
+        }
         continue;
       }
       int v = retVal, k = sp; haveRet = false;
@@ -176,18 +208,33 @@ public class Reversi : Game {
     }
   }
   int BestMove() {                               // bestMove(g, turn): -1 = null
-    if (jobState == 0) StartJob();
+    if (jobState == 0 || jobFor >= 0) StartJob();
     if (jobState == 1) Work(INF);
     jobState = 0;
-    int bestI = -1; double bestV = 0;
-    for (int k = 0; k < rootN; k++) {
-      int iv = rootV[k]; if (jobSide == 1) iv = -iv;
-      double v = iv + Rnd() * 4;
-      if (bestI < 0 || v > bestV) { bestI = rootI[k]; bestV = v; }
-    }
-    return bestI;
+    for (int k = 0; k < rootN; k++) Rnd();        // the JS draws one per candidate
+    return jobBestI;
   }
   bool CpuTurn() { return demo || turn == 2; }
+
+  // While you think, the CPU searches its reply to each of your legal moves in turn (lowest square first): the board
+  // and the random numbers can't change before your move, so a finished speculation is exactly the job that would
+  // start after it (Play takes it over, or keeps the one running if it's for the move you made).
+  ulong specDone; int[] specBest = new int[64], specN = new int[64];
+  void Speculate() {
+    while (work < QUOTA) {
+      if (jobState == 2 && jobFor >= 0) { specDone |= 1UL << jobFor; specBest[jobFor] = jobBestI; specN[jobFor] = rootN; jobState = 0; }
+      if (jobState != 0 && jobFor < 0) jobState = 0;               // not expected: a real job on your turn
+      if (jobState == 0) {
+        ulong todo = Mob(G1, G2) & ~specDone; if (todo == 0) return;
+        ulong x = todo & (~todo + 1); int m = Low(x);
+        ulong f = Flips(G1, G2, x), j1 = G1 | f | x, j2 = G2 & ~f;
+        work += W_NODE;
+        if (Mob(j2, j1) == 0) { specDone |= x; specBest[m] = -2; continue; }   // the CPU would pass: nothing to search
+        StartJobAt(j1, j2, 2, m);
+      }
+      Work(QUOTA);
+    }
+  }
 
   void Play(int i) {
     ulong x = 1UL << i, f;
@@ -195,7 +242,11 @@ public class Reversi : Game {
     nFlips = 0;
     while (f != 0) { ulong low = f & (~f + 1); f ^= low; flipI[nFlips] = Low(low); flipT[nFlips] = 0; flipTo[nFlips] = turn; nFlips++; }
     placedI = i; placedT = 0;
-    jobState = 0;
+    if (turn == 1 && jobFor == i && jobState == 1) jobFor = -1;          // the speculation was right: keep going
+    else if (turn == 1 && ((specDone >> i) & 1) != 0 && specBest[i] >= 0) {
+      jobState = 2; jobFor = -1; jobSide = 2; jobBestI = specBest[i]; rootN = specN[i];
+    } else { jobState = 0; jobFor = -1; }
+    specDone = 0;
     turn = 3 - turn; AfterTurn();
   }
   bool CanMove(int side) { return (side == 1 ? Mob(G1, G2) : Mob(G2, G1)) != 0; }
@@ -212,8 +263,10 @@ public class Reversi : Game {
     work = 0;
     Step(demo ? 0 : pressed);
     // search ahead while the CPU waits (the board can't change until it moves)
-    if (jobState == 0 && over == 0 && CpuTurn()) StartJob();
-    if (jobState == 1) Work(QUOTA);
+    if (over == 0) {
+      if (CpuTurn()) { if (jobState == 0) StartJob(); if (jobState == 1) Work(QUOTA); }
+      else Speculate();
+    }
     if (!demo) {                                  // tally(): a finished game counts once (the simulator skips demos)
       bool isOver = over > 0, was = wasOver; wasOver = isOver;
       if (isOver && !was) {
@@ -250,13 +303,17 @@ public class Reversi : Game {
   }
 
   // ---- drawing
-  static void Disc(Screen s, int x, int y, int side, int w) {   // 4 x 4 disc; w = 2 is the mid-flip edge-on view
-    int[] rows = side == 1 ? DISC1 : DISC2;
-    for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) {
-      if (w == 2 && (c == 0 || c == 3)) continue;
-      bool on = w == 2 ? !(r > 0 && r < 3 && side == 2) : ((rows[r] >> (3 - c)) & 1) != 0;
-      if (on) s.Set(x + c, y + r, true);
+  // 4 x 4 disc at (x, y): side 1 solid (.##. / #### / #### / .##.), side 2 a ring (.##. / #..# / #..# / .##.);
+  // w = 2 is the mid-flip edge-on view (the middle two columns; side 2 only their top and bottom)
+  static void Disc(Screen s, int x, int y, int side, int w) {
+    if (w == 2) {
+      if (side == 2) { s.Fill(x + 1, y, 2, 1, true); s.Fill(x + 1, y + 3, 2, 1, true); }
+      else s.Fill(x + 1, y, 2, 4, true);
+      return;
     }
+    s.Fill(x + 1, y, 2, 1, true); s.Fill(x + 1, y + 3, 2, 1, true);
+    if (side == 1) s.Fill(x, y + 1, 4, 2, true);
+    else { s.Fill(x, y + 1, 1, 2, true); s.Fill(x + 3, y + 1, 1, 2, true); }
   }
 
   public override void Draw(Screen s) {
