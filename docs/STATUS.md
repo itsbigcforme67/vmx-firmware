@@ -67,3 +67,10 @@ game: `tools/push_game.sh build/games/JUNCTION.VXP`. Worst tick ~180k IL (Auto B
 ~7-16k IL a tick, worst ~300k. Built into the firmware (`tools/embed_vxp.py` + `pio run` OK) but NOT on the rig yet:
 vmx.local was off the network. To put it on: `tools/push_game.sh build/games/9-BALL.VXP`, or reflash
 `cd esp32 && pio run -e ota -t upload`.
+
+## 2026-10-22: VMX CASINO chip bank
+`Microsoft.Vmx.Chips` (Balance / Bet / Pay / Bonus) for games with GAME.VXP flags bit 3 (`casino=1` in game.ini).
+The firmware keeps the bank in save `casino` (core/game_vx.c: 100 to start, daily top-up to 25, demo = scratch 100);
+CALL sends it as record 56581F00 (score = chips, f1 = peak, f2 = cashed). BLACKJACK and 9-BALL use it; parity
+passes at the default 100 and with `CHIPS=15` (going broke). vxrun takes `--chips N`. Firmware builds; not on the rig
+(offline). Design: vmx-world/docs/CASINO.md.

@@ -2,12 +2,13 @@
 // port of microgames/ui/games/blackjack_core.js to C# 1.0, plus the web simulator's adapter (POCKET ARCADE
 // vmx/games.js: a title screen that waits for A; the demo skips it), so it plays exactly the same (same random
 // numbers, same doubles); tools/parity checks that frame by frame.
-// Left/right set the bet and A deals; then A hits, B stands, Up doubles.
+// Left/right set the bet and A deals; then A hits, B stands, Up doubles. VMX CASINO: bait is this table's name for
+// the casino's shared chips (Microsoft.Vmx.Chips); broke (under 5) = no hands until the bank's daily top-up.
 using System;
 using Microsoft.Vmx;
 
 public class Blackjack : Game {
-  const int BET = 0, DEAL = 1, PLAY = 2, DEALER = 3, DONE = 4;   // g.phase
+  const int BET = 0, DEAL = 1, PLAY = 2, DEALER = 3, DONE = 4, BROKE = 5;   // g.phase
   const int MAXC = 40;                                          // cards a hand can hold (4 decks: 16 aces...)
 
   uint rs;                                       // the JS core's rng(): an LCG, divided down to [0, 1)
@@ -18,7 +19,7 @@ public class Blackjack : Game {
   int[] dR = new int[MAXC], dS = new int[MAXC], dAge = new int[MAXC]; bool[] dHid = new bool[MAXC]; int nD;
   int[] pR = new int[MAXC], pS = new int[MAXC], pAge = new int[MAXC]; bool[] pHid = new bool[MAXC]; int nP;
   double[] fishX = new double[2]; int[] fishY = new int[2]; int nFish;
-  int t, bait, bet, phase, msgT, wait, hands;
+  int t, bet, phase, msgT, wait, hands;
   string msg;
   bool title; int titleT;                        // the adapter's title screen
   bool demo; int best;
@@ -28,8 +29,12 @@ public class Blackjack : Game {
   public override void Start(int seed, bool demo) {
     this.demo = demo;
     rs = (uint)seed;
-    t = 0; bait = 100; bet = 10; phase = BET; nD = 0; nP = 0; msg = ""; msgT = 0; wait = 0; hands = 0; nFish = 0;
+    t = 0; bet = 10; phase = BET; nD = 0; nP = 0; msg = ""; msgT = 0; wait = 0; hands = 0; nFish = 0;
     Shuffle();
+    int bonus = Chips.Bonus(), bait = Chips.Balance();
+    if (bonus > 0) { msg = "DAILY BAIT +" + bonus.ToString(); msgT = 90; }
+    if (bait < 5) phase = BROKE;
+    bet = Math.Max(5, Math.Min(bet, bait - bait % 5));
     title = true; titleT = 0;
   }
   void Shuffle() {
@@ -58,7 +63,7 @@ public class Blackjack : Game {
   void DealP() { if (nShoe < 52) Shuffle(); nShoe--; pR[nP] = shoeR[nShoe]; pS[nP] = shoeS[nShoe]; pHid[nP] = false; pAge[nP] = 0; nP++; }
   void DealD(bool hidden) { if (nShoe < 52) Shuffle(); nShoe--; dR[nD] = shoeR[nShoe]; dS[nD] = shoeS[nShoe]; dHid[nD] = hidden; dAge[nD] = 0; nD++; }
   void Settle(string m, double win) {
-    bait += Round(bet * win); msg = m; msgT = 75; phase = DONE; wait = 75; hands++;
+    Chips.Pay(Round(bet * win)); msg = m; msgT = 75; phase = DONE; wait = 75; hands++;
   }
 
   public override void Tick(int held, int pressed) {
@@ -66,7 +71,7 @@ public class Blackjack : Game {
     else if (demo) { int w = Demo(); Step((w & 4) != 0, (w & 8) != 0, (w & 16) != 0, (w & 32) != 0, (w & 1) != 0); }
     else Step((pressed & Buttons.Left) != 0, (pressed & Buttons.Right) != 0, (pressed & Buttons.A) != 0,
               (pressed & Buttons.B) != 0, (pressed & Buttons.Up) != 0);
-    if (bait > best) { best = bait; Scores.Report(bait, 0, 0, 0); }
+    int bait = Chips.Balance(); if (bait > best) { best = bait; Scores.Report(bait, 0, 0, 0); }
   }
 
   void Step(bool left, bool right, bool a, bool b, bool up) {
@@ -88,9 +93,9 @@ public class Blackjack : Game {
     if (wait > 0) { wait--; if (wait != 0) return; }
     if (phase == BET) {
       if (left) bet = Math.Max(5, bet - 5);
-      if (right) bet = Math.Min(Math.Min(50, bait), bet + 5);
+      if (right) bet = Math.Min(Math.Min(50, Chips.Balance()), bet + 5);
       if (a) {
-        bet = Math.Min(bet, bait); bait -= bet;
+        bet = Math.Min(bet, Chips.Balance()); Chips.Bet(bet);
         nD = 0; nP = 0; DealP(); DealD(false); DealP(); DealD(true);
         phase = DEAL; wait = 20;
       }
@@ -104,8 +109,8 @@ public class Blackjack : Game {
       } else phase = PLAY;
     } else if (phase == PLAY) {
       if (a) { DealP(); wait = 8; if (PT() > 21) { dHid[1] = false; Settle("SNAGGED!", 0); } }
-      else if (up && nP == 2 && bait >= bet) {
-        bait -= bet; bet *= 2; DealP(); wait = 10;
+      else if (up && nP == 2 && Chips.Balance() >= bet) {
+        Chips.Bet(bet); bet *= 2; DealP(); wait = 10;
         if (PT() > 21) { dHid[1] = false; Settle("SNAGGED!", 0); } else phase = DEALER;
       } else if (b) { phase = DEALER; }
       if (phase == DEALER) { dHid[1] = false; wait = 18; }
@@ -118,9 +123,10 @@ public class Blackjack : Game {
       else if (p == d) Settle("SLACK LINE", 1);
       else Settle("THROWN BACK", 0);
     } else if (phase == DONE) {
+      int bait = Chips.Balance();
       if (bet > 10 && bait > 0) bet = Math.Max(10, (int)Math.Floor(bet / 2.0 / 5) * 5);   // doubled bets drop back
-      if (bait <= 0) { bait = 100; msg = "FRESH BAIT"; msgT = 60; }
-      bet = Math.Min(bet, bait); phase = BET;
+      if (bait < 5) { phase = BROKE; return; }
+      bet = Math.Min(bet, bait - bait % 5); phase = BET;
     }
   }
 
@@ -199,12 +205,13 @@ public class Blackjack : Game {
     if (nP > 0) s.Text(52, 34, PT().ToString().PadLeft(2, ' '), true);
     // bottom bar: bait and bet (a hook dangling over the bet)
     s.Fill(0, 51, 64, 1, true);
-    s.Text(1, 53, "BAIT " + bait.ToString().PadLeft(3, ' '), true);
+    s.Text(1, 53, "BAIT " + Chips.Balance().ToString().PadLeft(3, ' '), true);
     for (int j = 0; j < 6; j++) for (int i = 0; i < 3; i++) if (HOOK[j][i] == '#') s.Set(45 + i, 52 + j, true);
     string bs = bet.ToString().PadLeft(3, ' '); if (bs.Length > 3) bs = bs.Substring(bs.Length - 3);
     s.Text(51, 53, bs, true);
     // the hint; "< BET >": the JS core's font has no < or >, so they draw as spaces
-    string hint = phase == BET ? (((t >> 4) & 1) != 0 ? "A: CAST" : "  BET  ") : phase == PLAY ? "A HIT B STAY" : "";
+    string hint = phase == BET ? (((t >> 4) & 1) != 0 ? "A: CAST" : "  BET  ") : phase == PLAY ? "A HIT B STAY" :
+      phase == BROKE ? (((t >> 5) & 1) != 0 ? "MORE TOMORROW" : "OUT OF BAIT") : "";
     if (hint.Length > 0) s.Text((64 - Screen.TextWidth(hint)) >> 1, 59, hint, true);
     if (msgT != 0) {                               // the call-out, boxed over the water
       int w = Screen.TextWidth(msg) + 4, x = (64 - w) >> 1;
@@ -238,7 +245,7 @@ public class Blackjack : Game {
     if (phase != PLAY) return 0;
     int p = PT(); bool soft = totSoft;
     int up = Math.Min(10, dR[0] == 0 ? 11 : dR[0] + 1);
-    if (nP == 2 && (p == 11 || (p == 10 && up <= 9)) && bait >= bet) return Buttons.Up;
+    if (nP == 2 && (p == 11 || (p == 10 && up <= 9)) && Chips.Balance() >= bet) return Buttons.Up;
     bool hit = soft ? p <= 17 : p <= 11 || (p <= 16 && up >= 7) || (p == 12 && up <= 3);
     return hit ? Buttons.A : Buttons.B;
   }

@@ -12,7 +12,7 @@
 #define HEAP (128 * 1024)
 typedef struct {
   VmxGame g; uint32_t id; const uint8_t *code; size_t codeLen; uint8_t card[72];
-  char title[16], l1[8], l2[8]; int best, f[3], changed;
+  char title[16], l1[8], l2[8]; int best, f[3], changed, casino;
   struct { char name[24]; const uint8_t *d; uint32_t n; } files[4]; int nfiles;
 } VxGame;
 static VxGame G[MAXVX]; static int nG;
@@ -52,7 +52,41 @@ static int h_file(const char *name, int off, uint8_t *dst, int n) {
   }
   return dst ? 0 : -1;
 }
-static const VxHost HOST = { scr, h_tone, h_report, h_load, h_save, h_text, h_file };
+// VMX CASINO's chip bank (Microsoft.Vmx.Chips), kept by the firmware in its own save so every casino game shares it.
+// vmx-world/docs/CASINO.md: starts at 100; once a day, a casino game started with under STIPEND chips tops the bank
+// up to STIPEND; demos play from a scratch bank of 100.
+#define STIPEND 25
+static VmxBank bank; static int bankLoaded, bankDirty, bonus, demoBank = -1, bootStipend;
+static void bankLoad(void) {
+  if (bankLoaded) return;
+  bankLoaded = 1;
+  if (plat_load("casino", &bank, sizeof bank) != (int)sizeof bank || bank.magic != 0x42435856u) {
+    memset(&bank, 0, sizeof bank); bank.magic = 0x42435856u; bank.chips = bank.peak = 100; bank.stipendDay = 0xFFFF;
+  }
+}
+static void bankSave(void) { if (bankDirty) { plat_save("casino", &bank, sizeof bank); bankDirty = 0; } }
+const VmxBank *vmx_bank(void) { bankLoad(); return &bank; }
+void vmx_bank_sent(int32_t chips) { bankLoad(); bank.sent = chips; bank.sentOk = 1; bankDirty = 1; bankSave(); }
+static int h_chips(int op, int n) {
+  if (!cur || !cur->casino) return 0;
+  int32_t *c = demoBank >= 0 ? &demoBank : &bank.chips;
+  if (op == 0) return *c;
+  if (op == 3) return demoBank >= 0 ? 0 : bonus;
+  if (op == 1) { if (n > *c) return 0; *c -= n; if (demoBank < 0) { bank.staked += n; bankDirty = 1; } return 1; }
+  if (op == 2) { if (n > 0x3FFFFFFF - *c) n = 0x3FFFFFFF - *c; *c += n;
+    if (demoBank < 0) { bank.paid += n; if (bank.chips > bank.peak) bank.peak = bank.chips; bankDirty = 1; } }
+  return 0;
+}
+static void bankStart(VxGame *g, int demo) {
+  bonus = 0; demoBank = -1;
+  if (!g->casino) return;
+  if (demo) { demoBank = 100; return; }
+  bankLoad();
+  int d = plat_day();                                     // no clock: once per power-on
+  int fresh = d >= 0 ? (uint16_t)d != bank.stipendDay : !bootStipend;
+  if (fresh && bank.chips < STIPEND) { bonus = STIPEND - bank.chips; bank.chips = STIPEND; bank.stipendDay = (uint16_t)(d >= 0 ? d : 0xFFFE); bootStipend = 1; bankDirty = 1; bankSave(); }
+}
+static const VxHost HOST = { scr, h_tone, h_report, h_load, h_save, h_text, h_file, h_chips };
 
 // ---- the VmxGame calls, for game number n
 static void errorScreen(void) {
@@ -69,6 +103,7 @@ static void art_(VxGame *g, void *p) {
 }
 static void start_(VxGame *g, uint32_t seed, int demo) {
   cur = g; err[0] = 0; statInstr0 = 0;
+  bankStart(g, demo);
   if (!mem || !heapMem) { snprintf(err, sizeof err, "NO MEMORY"); g->g.usesB = 0; return; }
   const uint8_t *code = g->code;
   if (codeFast && g->codeLen <= codeFastLen) { memcpy(codeFast, g->code, g->codeLen); code = codeFast; }
@@ -82,6 +117,7 @@ static void tick_(VxGame *g, const VmxIn *in, int demo) {
   cur = g;
   uint32_t t0 = vmx_micros ? vmx_micros() : 0;
   if (vx_tick(vm, in->held & 63, in->edges & 63)) { snprintf(err, sizeof err, "%s", vx_error(vm)); g->g.usesB = 0; }
+  bankSave();
   if (vmx_micros) { uint32_t us = vmx_micros() - t0; statUs += us; statTicks++; if (us > statWorstUs) statWorstUs = us; }
 }
 static const uint8_t *draw_(VxGame *g) {
@@ -115,6 +151,7 @@ int vmx_add_game(const uint8_t *d, size_t len) {
   if (total > len || crc32(d + 32, total - 32) != rd32(d + 16)) return -1;
   VxGame *g = &G[nG]; memset(g, 0, sizeof *g);
   g->id = rd32(d + 4);
+  g->casino = (d[10] | d[11] << 8) & 8;                  // header flags bit 3: a VMX CASINO game
   for (uint32_t o = 32; o + 8 <= total; ) {
     const uint8_t *tag = d + o; uint32_t n = rd32(d + o + 4); const uint8_t *p = d + o + 8;
     if (o + 8 + n > total) return -1;

@@ -12,6 +12,13 @@ static void text(uint8_t *scr, int x, int y, const char *s, int on) { Surf S = {
 static void report(int s, int a, int b, int c) { (void)s; (void)a; (void)b; (void)c; }
 // --file NAME=PATH: a packed data file, as GAME.VXP would carry it
 static struct { char name[32]; uint8_t *d; int n; } files[8]; static int nfiles;
+static int bank = 100;                                    // a test chip bank (--chips N), as tools/parity/js_run.mjs
+static int chips(int op, int n) {
+  if (op == 0) return bank;
+  if (op == 1) { if (n > bank) return 0; bank -= n; return 1; }
+  if (op == 2) { bank += n; return 0; }
+  return 0;
+}
 static int file(const char *name, int off, uint8_t *dst, int n) {
   for (int i = 0; i < nfiles; i++) if (!strcmp(files[i].name, name)) {
     if (!dst) return files[i].n;
@@ -35,7 +42,8 @@ int main(int argc, char **argv) {
     files[nfiles].d = malloc((size_t)files[nfiles].n); if (fread(files[nfiles].d, 1, (size_t)files[nfiles].n, ff) != (size_t)files[nfiles].n) return 1;
     fclose(ff); nfiles++;
   }
-  VxHost host = { screen, NULL, report, NULL, NULL, text, file };
+  for (int i = 1; i < argc - 1; i++) if (!strcmp(argv[i], "--chips")) bank = atoi(argv[i + 1]);
+  VxHost host = { screen, NULL, report, NULL, NULL, text, file, chips };
   size_t need = vx_need(img, n, 131072); void *mem = malloc(need); char err[128];
   Vx *vm = vx_load(mem, need, img, n, 131072, &host, err, sizeof err);
   if (!vm) { fprintf(stderr, "load: %s\n", err); return 1; }

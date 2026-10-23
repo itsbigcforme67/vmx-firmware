@@ -30,6 +30,9 @@ typedef struct {                     // what the game can reach: the platform fi
   // a packed data file: copies up to n bytes from offset into dst, returns how many; dst NULL: returns its length
   // (-1 if there is no such file)
   int  (*file)(const char *name, int offset, uint8_t *dst, int n);
+  // VMX CASINO's chip bank (Microsoft.Vmx.Chips): op 0 balance, 1 bet n (1 = taken, 0 = not enough), 2 pay n,
+  // 3 today's bonus; NULL = no bank (every call answers 0)
+  int  (*chips)(int op, int n);
 } VxHost;
 #define VX_SAVE_MAX 16384
 

@@ -50,6 +50,20 @@ namespace Microsoft.Vmx {
     [MethodImpl(MethodImplOptions.InternalCall)] public static extern byte[] LoadOther(int gameId);
   }
 
+  // VMX CASINO's shared chip bank: every casino game (game.ini casino=1) sees the same balance, so chips won at one
+  // table can be staked at another and cashed out at the Xbox (VMX World's CASHIER). Other games get 0 / false.
+  // In a demo the VMX plays from a scratch bank of 100 chips, so attract mode never touches the player's chips.
+  public sealed class Chips {
+    // the chips in the bank now
+    [MethodImpl(MethodImplOptions.InternalCall)] public static extern int Balance();
+    // takes n chips for a stake; false (and nothing taken) if the bank has fewer
+    [MethodImpl(MethodImplOptions.InternalCall)] public static extern bool Bet(int n);
+    // pays n chips into the bank (winnings, stakes back)
+    [MethodImpl(MethodImplOptions.InternalCall)] public static extern void Pay(int n);
+    // the daily chips the bank gave when this game started (a small top-up once a day while you're low), or 0
+    [MethodImpl(MethodImplOptions.InternalCall)] public static extern int Bonus();
+  }
+
   // read-only data files packed into this game's GAME.VXP (tools/vxp.py --file NAME=PATH), read in pieces so a big
   // file needn't fit in the heap
   public sealed class Package {

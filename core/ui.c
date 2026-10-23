@@ -228,6 +228,13 @@ static int callRecords(void) {         // fills S.crec / S.cidx with every score
     S.crec[n] = (ScoreRec){ g->tid, 0, 0, r->day, score, { (uint16_t)key[1], (uint16_t)key[2], (uint16_t)key[3] } };
     S.cidx[n++] = i;
   }
+  // VMX CASINO's chip stash (vmx-world/docs/CASINO.md): score = chips now, field 1 = the most ever held, field 2 =
+  // chips cashed out at the Xbox; listed once chips have been played
+  const VmxBank *bk = vmx_bank();
+  if (n < 16 && (bk->staked || bk->paid) && !(bk->sentOk && bk->sent == bk->chips)) {
+    uint16_t pk = bk->peak > 65535 ? 65535 : (uint16_t)bk->peak, ca = bk->cashed > 65535 ? 65535 : (uint16_t)bk->cashed;
+    S.crec[n] = (ScoreRec){ 0x56581F00u, 0, 0, (uint16_t)day_now(), bk->chips, { pk, ca, 0 } }; S.cidx[n++] = -1;
+  }
   return S.cn = n;
 }
 static void drawCall(void) {
@@ -237,8 +244,8 @@ static void drawCall(void) {
     int n = callRecords();
     if (!n) { s_centre(&lcd, 22, "NO NEW", 1); s_centre(&lcd, 29, "SCORES", 1); s_centre(&lcd, 52, "B: BACK", 1); return; }
     int top = S.callSel - 1; if (top > n - 4) top = n - 4; if (top < 0) top = 0;
-    for (int i = 0; i < 4 && top + i < n; i++) { int y = 10 + i * 8; const VmxGame *g = VMX_GAMES[S.cidx[top + i]];
-      snprintf(b, 9, "%s", g->title); s_text(&lcd, 1, y, b, 1);
+    for (int i = 0; i < 4 && top + i < n; i++) { int y = 10 + i * 8; int gi = S.cidx[top + i];
+      snprintf(b, 9, "%s", gi < 0 ? "CHIPS" : VMX_GAMES[gi]->title); s_text(&lcd, 1, y, b, 1);
       snprintf(b, sizeof b, "%d", (int)S.crec[top + i].score); s_text(&lcd, 63 - tw(b), y, b, 1); }
     if (n > 4) { if (top > 0) s_tri(&lcd, 60, 9, 1, 1); if (top + 4 < n) s_tri(&lcd, 60, 41, 0, 1); }
     snprintf(b, sizeof b, "%d NEW", n); s_centre(&lcd, 46, b, 1); s_centre(&lcd, 55, "A: CALL IN", 1);
@@ -353,7 +360,8 @@ static void press(int b) {
     case SC_CALLSEND: if (b == B_B) { snd_hangup(); backSnd(); go(SC_CALL); } break;
     case SC_CALLCODE:
       if (b == B_A) {
-        for (int i = 0; i < S.cn; i++) { VmxRec *r = rec(VMX_GAMES[S.cidx[i]]->id); const ScoreRec *q = &S.crec[i];
+        for (int i = 0; i < S.cn; i++) { if (S.cidx[i] < 0) { vmx_bank_sent(S.crec[i].score); continue; }
+          VmxRec *r = rec(VMX_GAMES[S.cidx[i]]->id); const ScoreRec *q = &S.crec[i];
           r->sent[0] = q->score; for (int k = 0; k < 3; k++) r->sent[k + 1] = q->f[k]; r->sentOk = 1; }
         saveRecs(); snd_hangup(); okSnd(); go(SC_MAIN); flash("SENT");
       }

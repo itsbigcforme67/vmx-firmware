@@ -33,6 +33,11 @@ void plat_wifi_setup(void);                 // SETTINGS > WIFI, A: start Wi-Fi s
 // games in GAME.VXP files (managed code, runtime/vxrt.c): add them before vmx_init (the data must stay put)
 int  vmx_add_game(const uint8_t *vxp, size_t len);   // 0 = added, -1 = not a valid VXP
 
+// VMX CASINO's shared chip bank (core/game_vx.c; vmx-world/docs/CASINO.md)
+typedef struct { uint32_t magic; int32_t chips, peak, staked, paid, cashed, sent; uint16_t stipendDay; uint8_t sentOk, pad; } VmxBank;
+const VmxBank *vmx_bank(void);
+void vmx_bank_sent(int32_t chips);          // CALL sent this stash
+
 // a game (core/games.c lists them)
 typedef struct { int held, edges; } VmxIn;
 typedef struct { int32_t best, w, l, d; uint16_t day; uint8_t sentOk; int32_t sent[4]; } VmxRec;

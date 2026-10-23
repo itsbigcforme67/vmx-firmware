@@ -362,6 +362,11 @@ static void n_pkgRead(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) {
   if (idx < 0 || n < 0 || off < 0 || (uint32_t)(idx + n) > arrLen(vm, d) || (hw(vm, d)[1] >> 24) != VK_U1) fail(vm, "PACKAGE.READ: BAD BUFFER%s", NULL);
   RET_I(vm->host->file ? vm->host->file(nm, off, data(vm, d) + idx, n) : 0);
 }
+static int chips(Vx *vm, int op, int n) { return vm->host->chips ? vm->host->chips(op, n) : 0; }
+static void n_chBal(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { RET_I(chips(vm, 0, 0)); }
+static void n_chBet(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { RET_I(a[0].i >= 0 && chips(vm, 1, a[0].i) ? 1 : 0); }
+static void n_chPay(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { if (a[0].i > 0) chips(vm, 2, a[0].i); }
+static void n_chBonus(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { RET_I(chips(vm, 3, 0)); }
 static const struct { const char *name; Native fn; } NATIVES[] = {
   { "Microsoft.Vmx.Package::Length/1", n_pkgLen }, { "Microsoft.Vmx.Package::Read/5", n_pkgRead },
   { "System.Int32::ToString/0", n_i4ToString }, { "System.UInt32::ToString/0", n_u4ToString }, { "System.Byte::ToString/0", n_u1ToString },
@@ -378,6 +383,7 @@ static const struct { const char *name; Native fn; } NATIVES[] = {
   { "Microsoft.Vmx.Screen::Fill/5", n_scrFill }, { "Microsoft.Vmx.Screen::Text/4", n_scrText },
   { "Microsoft.Vmx.Beeper::Tone/3", n_tone }, { "Microsoft.Vmx.Scores::Report/4", n_report },
   { "Microsoft.Vmx.Storage::Load/0", n_load }, { "Microsoft.Vmx.Storage::Save/1", n_save }, { "Microsoft.Vmx.Storage::LoadOther/1", n_loadOther },
+  { "Microsoft.Vmx.Chips::Balance/0", n_chBal }, { "Microsoft.Vmx.Chips::Bet/1", n_chBet }, { "Microsoft.Vmx.Chips::Pay/1", n_chPay }, { "Microsoft.Vmx.Chips::Bonus/0", n_chBonus },
 };
 
 // ---------------------------------------------------------------- loading

@@ -4,7 +4,8 @@
 const [game, seed, demo, ticks, pseed] = process.argv.slice(2);
 const core = (await import(new URL(`../../../microgames/ui/games/${game}_core.js`, import.meta.url)));
 const A = (await import(new URL(`./adapters/${game}.mjs`, import.meta.url))).default(core);
-const isDemo = +demo === 1; const g = await A.start(+seed, isDemo);
+const isDemo = +demo === 1; const bank = { chips: +(process.env.CHIPS || 100), bonus: 0 };   // as vxrun --chips
+const g = await A.start(+seed, isDemo, bank);
 let ps = (+(pseed ?? 1)) >>> 0, held = 0;
 const B = ["up", "down", "left", "right", "a", "b"];
 const bits = v => { const o = {}; B.forEach((b, i) => o[b] = !!(v & (1 << i))); return o; };
