@@ -200,7 +200,12 @@ const char *vx_method_name(Vx *vm, int m);
 const char *vmx_method_name(int m) { return vm ? vx_method_name(vm, m) : "?"; }
 // one block for the interpreter (sized for the biggest game) and one for the game heap, made once: fast internal RAM
 // for whichever fits (VX_FAST_HEAP: the heap first; search-heavy games walk their arrays), PSRAM for the other
+static int vx_need_more(void) {
+  for (int i = 0; i < nG; i++) if (vx_need(G[i].code, G[i].codeLen, 0) + 64 > memLen) return 1;
+  return 0;
+}
 static void vx_memory(void) {
+  if (mem && heapMem && !vx_need_more()) return;          // what we have is big enough
   size_t big = 0; for (int i = 0; i < nG; i++) { size_t n = vx_need(G[i].code, G[i].codeLen, 0) + 64; if (n > big) big = n; }
   if (!big) return;
 #ifdef VX_FAST_HEAP
@@ -214,5 +219,8 @@ static void vx_memory(void) {
   size_t bigCode = 0; for (int i = 0; i < nG; i++) if (G[i].codeLen > bigCode && G[i].codeLen <= 48 * 1024) bigCode = G[i].codeLen;
   codeFast = bigCode ? plat_alloc_fast(bigCode) : NULL; codeFastLen = codeFast ? bigCode : 0;
 }
+// forget the games added so far (VMX World re-reads its hard disk before each PLAY); the next vx_games sizes the
+// memory again, re-using the old blocks if they are big enough
+void vmx_clear_games(void) { nG = 0; cur = NULL; vm = NULL; }
 int vx_games(VmxGame **out, int max) {
-  if (!mem) vx_memory(); int n = nG < max ? nG : max; for (int i = 0; i < n; i++) out[i] = &G[i].g; return n; }
+  if (!mem || !nG || vx_need_more()) vx_memory(); int n = nG < max ? nG : max; for (int i = 0; i < n; i++) out[i] = &G[i].g; return n; }

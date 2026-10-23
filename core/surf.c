@@ -20,8 +20,9 @@ const char *font_glyph(int ch) {
   for (unsigned i = 0; i < sizeof FONT / sizeof FONT[0]; i++) if (FONT[i].c == ch) return FONT[i].g;
   return "110001010000010";                                   // '?'
 }
-// the FOLD renderer (microgames/fold/app/vmx.c) asks for its glyphs by this name; unknown ones are blank there
-const char *gfx_glyph(int ch) {
+// the FOLD renderer (microgames/fold/app/vmx.c) asks for its glyphs by this name; unknown ones are blank there.
+// Weak: a build that links FOLD's own gfx.c (VMX World) uses that one.
+__attribute__((weak)) const char *gfx_glyph(int ch) {
   if (ch >= 'a' && ch <= 'z') ch -= 32;
   for (unsigned i = 0; i < sizeof FONT / sizeof FONT[0]; i++) if (FONT[i].c == ch) return FONT[i].g;
   return FONT[36].g;
