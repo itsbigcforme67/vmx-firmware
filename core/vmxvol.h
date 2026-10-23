@@ -1,9 +1,14 @@
-// The VMX's storage on its memory-unit volume (fatx.h), laid out as VMX World's folder on any Xbox memory unit (the
-// root of a memory unit holds title folders, as UDATA does on the hard disk; vmx-world/docs/DESIGN.md):
-//   56580001\TitleMeta.xbx                 "TitleName=VMX World" (UTF-16): the dashboard names the folder by it
-//   56580001\<game ID>0000\GAME.VXP        an installed game, with SaveMeta.xbx "Name=<title>"
-//   56580001\VMX\<KEY>.BIN                 the firmware's plat_load / plat_save keys (settings, recs, casino, ...)
-// The same on the VMX itself, in the PC build (an image file) and in World (the VMX in a controller, over USB).
+// The VMX's storage on its memory-unit volume (fatx.h): VMX World's folder, as on any Xbox memory unit (the root of
+// a memory unit holds title folders, as UDATA does on the hard disk; vmx-world/docs/DESIGN.md). The Xbox dashboard
+// shows "VMX World" with one save per VMX game, plus one shared save for the casino chips:
+//   56580001\TitleMeta.xbx                 "TitleName=VMX World" (UTF-16)
+//   56580001\VMX.SYS                       marks a VMX (World tells a VMX from other memory units by it)
+//   56580001\SETTINGS.BIN                  the VMX's settings (loose: not a save in the dashboard)
+//   56580001\<game ID>0000\                a VMX game: SaveMeta.xbx "Name=<title>", GAME.VXP (if installed rather than
+//                                          built in), SAVE.BIN (the game's own save), RECORD.BIN (its scores)
+//   56580001\56581F000000\                 "VMX CASINO CHIPS": CHIPS.BIN, the stash every casino game shares
+// The firmware's plat_load / plat_save keys map onto that (vol_key_path); VMX World uses the same mapping on the
+// hard disk (UDATA\...) for its own VMX. The same on the VMX, in the PC build (an image file) and over USB.
 #ifndef VMXVOL_H
 #define VMXVOL_H
 #include "fatx.h"
@@ -11,9 +16,16 @@
 extern "C" {
 #endif
 #define VOL_TITLE "56580001"
+#define VOL_CHIPS 0x56581F00u                            // the casino chips' save folder (their score record's ID)
 int  vol_open(Fatx *v);                                   // mounts it, or formats one that isn't FATX; 1 = ok
 int  vol_load(Fatx *v, const char *key, void *buf, int max);      // bytes, 0 = none
-int  vol_save(Fatx *v, const char *key, const void *buf, int n);  // 1 = ok
+int  vol_save(Fatx *v, const char *key, const void *buf, int n);  // 1 = ok; buf NULL = delete it
+// where a key lives, from the volume's root, with \ between names: "settings", "casino", "g<ID>" (a game's save),
+// "r<ID>" (its record); anything else is a loose file in the title folder. *folder = the save folder's game ID it
+// is in (it needs a SaveMeta.xbx, named by vol_name), or 0
+void vol_key_path(const char *key, char out[64], uint32_t *folder);
+void vol_name(uint32_t id, const char *title);           // the name a game's save folder gets (VMX_GAMES' titles)
+const char *vol_title(uint32_t id);
 int  vol_games(Fatx *v, uint32_t *ids, int max);          // the installed games' IDs
 void vol_game_path(uint32_t id, char out[40]);            // its GAME.VXP
 int  vol_install(Fatx *v, uint32_t id, const char *title, const void *vxp, int n);   // 1 = ok

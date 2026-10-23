@@ -116,3 +116,13 @@ The VMX's storage is now an Xbox memory unit's volume, and the CoreS3's USB-C is
   and a PC mounting it (Linux sees an 3.4 MB disk with an unknown file system; build/vmxmu reads it).
 - Flash wear: no wear levelling yet (the cluster table's 4 KB block is rewritten on every file change; NOR flash
   takes ~100k erases). Fine for testing; a real VMX wants a wear-levelling layer under the volume.
+
+## 2026-10-23 later: saves laid out as the dashboard shows them (owner's model)
+Dashboard: "VMX World"; inside it one save per VMX game (`<ID>0000\`: SaveMeta.xbx, GAME.VXP if installed, SAVE.BIN
+= the game's own save, RECORD.BIN = its record), and one shared save "VMX CASINO CHIPS" (`56581F000000\CHIPS.BIN`)
+written once for every casino game. Settings are a loose `56580001\SETTINGS.BIN`, `VMX.SYS` marks a VMX. Keys
+(core/vmxvol.h vol_key_path): settings, casino, g<ID> (FOLD ROOMS' "fold" is now g56581010), r<ID>; the old single
+"recs" save is split into r<ID> files on first start. plat_save(key, NULL, 0) deletes. Save folders get their
+SaveMeta.xbx name from the games' titles (vol_name, from vmx_init). World uses the same mapping on the hard disk.
+Self-test covers it; the host run, World (PC + xemu memory unit) agree. Applets: World content in
+E:\TDATA\56580001\$c\5658000156581010\ (vmx-world DESIGN.md). Not made yet: SaveImage.xbx / TitleImage.xbx icons.

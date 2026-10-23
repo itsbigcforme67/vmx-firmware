@@ -24,7 +24,7 @@ void vmx_audio(int16_t *out, int n);        // the next n samples (mono, VMX_RAT
 void *plat_alloc(size_t n);                 // big, long-lived buffers (PSRAM on the CoreS3)
 void *plat_alloc_fast(size_t n);            // small, busy buffers: fast internal RAM if there is room (else NULL)
 int  plat_load(const char *key, void *buf, int max);       // bytes read, 0 = none
-void plat_save(const char *key, const void *buf, int n);
+void plat_save(const char *key, const void *buf, int n);  // buf NULL: delete it. Keys: core/vmxvol.h
 int  plat_day(void);                        // days since 15 Nov 2001, or -1 if the clock isn't set
 const char *plat_name(void);                // what ABOUT says the VMX is running on
 int  plat_wifi(char lines[4][16]);          // SETTINGS > WIFI: status lines; returns how many (0 = no Wi-Fi here)

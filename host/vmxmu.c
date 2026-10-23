@@ -65,10 +65,21 @@ static int selftest(const char *img) {
   T(fatx_read(&v, "fill\\0", b, sizeof b) == 300000);
   T(fatx_remove(&v, "fill") && fatx_free_bytes(&v) == full);
   // the VMX's layout
-  T(vol_open(&v)); T(vol_save(&v, "recs", a, 999)); T(vol_load(&v, "recs", b, sizeof b) == 999 && !memcmp(a, b, 999));
+  uint32_t ids0[8];
+  T(vol_open(&v)); T(fatx_size(&v, "56580001\\VMX.SYS") == 5);
+  T(vol_save(&v, "settings", a, 8)); T(fatx_size(&v, "56580001\\SETTINGS.BIN") == 8);
+  T(vol_save(&v, "casino", a, 32)); T(fatx_size(&v, "56580001\\56581F000000\\CHIPS.BIN") == 32);
+  T(fatx_read(&v, "56580001\\56581F000000\\SaveMeta.xbx", b, sizeof b) == 2 + 2 * 23 && b[2] == 'N' && b[12] == 'V');   // "Name=VMX CASINO CHIPS"
+  vol_name(0x56581003u, "INTERCEPT");
+  T(vol_save(&v, "g56581003", a, 999)); T(vol_load(&v, "g56581003", b, sizeof b) == 999 && !memcmp(a, b, 999));
+  T(vol_save(&v, "r56581003", a, 40)); T(fatx_size(&v, "56580001\\565810030000\\RECORD.BIN") == 40);
+  T(fatx_read(&v, "56580001\\565810030000\\SaveMeta.xbx", b, sizeof b) == 2 + 2 * 16 && b[12] == 'I');            // "Name=INTERCEPT"
+  T(vol_save(&v, "r56581003", NULL, 0) && vol_load(&v, "r56581003", b, sizeof b) == 0);
+  T(vol_games(&v, ids0, 8) == 0);                                        // saves without GAME.VXP aren't installed games
   T(vol_install(&v, 0x56581001u, "BLOX", a, 70000)); T(vol_install(&v, 0x56581002u, "BLOBS", a, 9));
   uint32_t ids[8]; T(vol_games(&v, ids, 8) == 2);
   T(vol_remove(&v, 0x56581001u) && vol_games(&v, ids, 8) == 1 && ids[0] == 0x56581002u);
+  T(vol_remove(&v, 0x56581003u) && fatx_size(&v, "56580001\\565810030000") == -1);          // a game goes with its save
   fatx_unmount(&v); fclose(f);
   printf("fatx self-test ok\n"); return 0;
 }

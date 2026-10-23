@@ -7,6 +7,7 @@
 #include "sound.h"
 #include "records.h"
 #include "xmask.h"
+#include "vmxvol.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -41,7 +42,20 @@ static VmxRec *rec(const char *id) {
   for (int i = 0; i < NREC; i++) if (!RECS[i].id[0]) { snprintf(RECS[i].id, sizeof RECS[i].id, "%s", id); return &RECS[i].r; }
   return &RECS[NREC - 1].r;
 }
-static void saveRecs(void) { plat_save("recs", RECS, sizeof RECS); }
+static void saveRec(const VmxGame *g) {   // each game's record goes in its own save folder ("r<ID>": vmxvol.h)
+  char k[12]; snprintf(k, sizeof k, "r%08x", (unsigned)g->tid); if (g->tid) plat_save(k, rec(g->id), sizeof(VmxRec));
+}
+static void loadRecs(void) {
+  memset(RECS, 0, sizeof RECS);
+  if (plat_load("recs", RECS, sizeof RECS) > 0) {        // an older VMX kept them all in one "recs": split it up
+    for (int i = 0; i < VMX_NGAMES; i++) saveRec(VMX_GAMES[i]);
+    plat_save("recs", NULL, 0); return;
+  }
+  for (int i = 0; i < VMX_NGAMES; i++) {
+    char k[12]; VmxRec r; snprintf(k, sizeof k, "r%08x", (unsigned)VMX_GAMES[i]->tid);
+    if (VMX_GAMES[i]->tid && plat_load(k, &r, sizeof r) == (int)sizeof r) *rec(VMX_GAMES[i]->id) = r;
+  }
+}
 static void saveSet(void) { plat_save("settings", &SET, sizeof SET); }
 
 // ---------------------------------------------------------------- sounds (the simulator's)
@@ -295,7 +309,7 @@ static void tickGame(int held) {
   if (S.demo) { if (in.edges & 63) { backSnd(); close_game(); return; } }
   else if ((in.edges & B_B) && !S.g->usesB) { backSnd(); close_game(); return; }
   S.g->tick(&in, S.demo);
-  if (!S.demo) { VmxRec *r = rec(S.g->id); if (S.g->record(r)) { r->day = (uint16_t)day_now(); saveRecs(); } }
+  if (!S.demo) { VmxRec *r = rec(S.g->id); if (S.g->record(r)) { r->day = (uint16_t)day_now(); saveRec(S.g); } }
   if (S.attract && (S.since += 1 / 30.0f) > 25) { int n = (S.k + 1) % VMX_NGAMES; S.game = n; open_game(n, 1, 1); }
 }
 
@@ -330,7 +344,7 @@ static void press(int b) {
       break;
     case SC_ERASE:
       if (b == B_UP || b == B_DOWN) { S.erase = 1 - S.erase; blip(); }
-      if (b == B_A) { if (S.erase) { memset(rec(VMX_GAMES[S.save]->id), 0, sizeof(VmxRec)); saveRecs(); backSnd(); flash("ERASED"); } else okSnd(); go(SC_SAVES); }
+      if (b == B_A) { if (S.erase) { memset(rec(VMX_GAMES[S.save]->id), 0, sizeof(VmxRec)); saveRec(VMX_GAMES[S.save]); backSnd(); flash("ERASED"); } else okSnd(); go(SC_SAVES); }
       if (b == B_B) { backSnd(); go(SC_SAVES); }
       break;
     case SC_SETTINGS:
@@ -364,8 +378,8 @@ static void press(int b) {
       if (b == B_A) {
         for (int i = 0; i < S.cn; i++) { if (S.cidx[i] < 0) { vmx_bank_sent(S.crec[i].score); continue; }
           VmxRec *r = rec(VMX_GAMES[S.cidx[i]]->id); const ScoreRec *q = &S.crec[i];
-          r->sent[0] = q->score; for (int k = 0; k < 3; k++) r->sent[k + 1] = q->f[k]; r->sentOk = 1; }
-        saveRecs(); snd_hangup(); okSnd(); go(SC_MAIN); flash("SENT");
+          r->sent[0] = q->score; for (int k = 0; k < 3; k++) r->sent[k + 1] = q->f[k]; r->sentOk = 1; saveRec(VMX_GAMES[S.cidx[i]]); }
+        snd_hangup(); okSnd(); go(SC_MAIN); flash("SENT");
       }
       if (b == B_B) { snd_hangup(); backSnd(); go(SC_CALL); }
       break;
@@ -401,8 +415,9 @@ static float chase(float cur, float target, int n, float dt) {
 }
 void vmx_init(void) {
   games_init(); xmask_init(); menuGlyphs();
+  for (int i = 0; i < VMX_NGAMES; i++) vol_name(VMX_GAMES[i]->tid, VMX_GAMES[i]->title);   // save folders' names
   for (int i = 0; i < VMX_NGAMES && i < 36; i++) { ART[i] = (Surf){ 24, 24, artBuf[i] }; VMX_GAMES[i]->art(&ART[i]); }
-  plat_load("settings", &SET, sizeof SET); plat_load("recs", RECS, sizeof RECS);
+  plat_load("settings", &SET, sizeof SET); loadRecs();
   memset(&S, 0, sizeof S); S.screen = SC_OFF;
 }
 const uint8_t *vmx_screen(void) { return S.screen == SC_PLAY && S.playing && !linked ? S.g->draw() : lcdBuf; }

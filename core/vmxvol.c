@@ -17,11 +17,38 @@ int vol_open(Fatx *v) {
     char m[260]; int n = vol_meta(m, sizeof m, "TitleName", "VMX World");
     if (!fatx_write(v, VOL_TITLE "\\TitleMeta.xbx", m, n)) return 0;
   }
-  return fatx_mkdir(v, VOL_TITLE "\\VMX");
+  return fatx_size(v, VOL_TITLE "\\VMX.SYS") >= 0 || fatx_write(v, VOL_TITLE "\\VMX.SYS", "VMX\r\n", 5);
 }
-static void key_path(const char *key, char out[64]) { snprintf(out, 64, VOL_TITLE "\\VMX\\%.20s.BIN", key); }
-int vol_load(Fatx *v, const char *key, void *buf, int max) { char p[64]; key_path(key, p); int n = fatx_read(v, p, buf, max); return n > 0 ? n : 0; }
-int vol_save(Fatx *v, const char *key, const void *buf, int n) { char p[64]; key_path(key, p); return fatx_write(v, p, buf, n); }
+static struct { uint32_t id; char title[24]; } names[48]; static int nnames;
+void vol_name(uint32_t id, const char *title) {
+  int i = 0; while (i < nnames && names[i].id != id) i++;
+  if (i == nnames) { if (nnames == 48) return; nnames++; }
+  names[i].id = id; snprintf(names[i].title, sizeof names[i].title, "%s", title);
+}
+const char *vol_title(uint32_t id) {
+  if (id == VOL_CHIPS) return "VMX CASINO CHIPS";
+  for (int i = 0; i < nnames; i++) if (names[i].id == id) return names[i].title;
+  return "VMX GAME";
+}
+void vol_key_path(const char *key, char out[64], uint32_t *folder) {
+  uint32_t id = 0; *folder = 0;
+  if (!strcmp(key, "settings")) { snprintf(out, 64, VOL_TITLE "\\SETTINGS.BIN"); return; }
+  if (!strcmp(key, "casino")) { *folder = VOL_CHIPS; snprintf(out, 64, VOL_TITLE "\\%08X0000\\CHIPS.BIN", (unsigned)VOL_CHIPS); return; }
+  if ((key[0] == 'g' || key[0] == 'r') && strlen(key) == 9 && sscanf(key + 1, "%8x", &id) == 1 && id) {
+    *folder = id; snprintf(out, 64, VOL_TITLE "\\%08X0000\\%s", (unsigned)id, key[0] == 'g' ? "SAVE.BIN" : "RECORD.BIN"); return;
+  }
+  snprintf(out, 64, VOL_TITLE "\\%.20s.BIN", key);
+}
+int vol_load(Fatx *v, const char *key, void *buf, int max) { char p[64]; uint32_t f; vol_key_path(key, p, &f); int n = fatx_read(v, p, buf, max); return n > 0 ? n : 0; }
+int vol_save(Fatx *v, const char *key, const void *buf, int n) {
+  char p[64], m[260]; uint32_t f; vol_key_path(key, p, &f);
+  if (!buf) return fatx_size(v, p) < 0 || fatx_remove(v, p);
+  if (f) {                                                // a save folder: named for the dashboard
+    char meta[48]; snprintf(meta, sizeof meta, VOL_TITLE "\\%08X0000\\SaveMeta.xbx", (unsigned)f);
+    if (fatx_size(v, meta) < 0) { int k = vol_meta(m, sizeof m, "Name", vol_title(f)); if (!fatx_write(v, meta, m, k)) return 0; }
+  }
+  return fatx_write(v, p, buf, n);
+}
 static int hexid(const char *s, uint32_t *id) {          // a save folder's name: 8 hex digits + 0000
   if (strlen(s) != 12 || strcmp(s + 8, "0000")) return 0;
   uint32_t x = 0;
@@ -40,6 +67,7 @@ int vol_games(Fatx *v, uint32_t *ids, int max) {
 void vol_game_path(uint32_t id, char out[40]) { snprintf(out, 40, VOL_TITLE "\\%08X0000\\GAME.VXP", (unsigned)id); }
 int vol_install(Fatx *v, uint32_t id, const char *title, const void *vxp, int n) {
   char p[40], m[260]; vol_game_path(id, p);
+  vol_name(id, title);
   if (!fatx_write(v, p, vxp, n)) return 0;
   snprintf(p, sizeof p, VOL_TITLE "\\%08X0000\\SaveMeta.xbx", (unsigned)id);
   int k = vol_meta(m, sizeof m, "Name", title);

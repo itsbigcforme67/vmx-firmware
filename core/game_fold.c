@@ -23,7 +23,7 @@ static void load(int i) {
 }
 static void start(uint32_t seed, int demo) {
   (void)seed;
-  if (!lv) { lv = plat_alloc(sizeof *lv); g = plat_alloc(sizeof *g); plat_load("fold", &cleared, sizeof cleared); }
+  if (!lv) { lv = plat_alloc(sizeof *lv); g = plat_alloc(sizeof *g); plat_load("g56581010", &cleared, sizeof cleared); }
   load(demo ? 0 : cleared < FOLD_NLEVELS ? cleared : FOLD_NLEVELS - 1);
 }
 static int isDemo;
@@ -32,7 +32,7 @@ static void moved(int r) {
   if (popWord) popT = 30;
   if (fold_solved(g)) {
     wonT = 1;
-    if (!isDemo && level + 1 > cleared) { cleared = level + 1; plat_save("fold", &cleared, sizeof cleared); }
+    if (!isDemo && level + 1 > cleared) { cleared = level + 1; plat_save("g56581010", &cleared, sizeof cleared); }
   }
 }
 static void tick(const VmxIn *in, int demo) {
