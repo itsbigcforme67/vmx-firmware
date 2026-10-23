@@ -86,3 +86,33 @@ hilo war baccarat threecard reddog letitride craps sicbo chuckaluck keno bigsix 
 30000 ticks (and CHIPS=15); all in `make test`. Limits raised to MAXVX 32 / 36 records. corlib: String.Concat(params
 string[]/object[]) (C# turns a + b + c + d + e into one array call). VXP file names are now letters and digits only
 (build_game.sh). Owner: not every game needs to be on the VMX at once; the firmware still embeds them all for tests.
+
+## 2026-10-23: the VMX as a USB memory unit (owner: "let's get usb transfers working with VMX")
+The VMX's storage is now an Xbox memory unit's volume, and the CoreS3's USB-C is that memory unit:
+- `core/fatx.c` (hardware-free FATX, as the Xbox kernel and nxdk's nxFormatVolume lay it out: 4 KB superblock, 16-bit
+  cluster table under 65520 clusters, 16 KB clusters) and `core/vmxvol.c` (the VMX's layout on it: `56580001\TitleMeta.xbx`,
+  `56580001\<ID>0000\GAME.VXP` + `SaveMeta.xbx` per installed game, `56580001\VMX\<key>.BIN` for every plat_save key).
+  The root of a memory unit holds title folders, as UDATA does on the hard disk.
+- `build/vmxmu IMG format|ls|tree|get|put|rm|install|test` (host/vmxmu.c): the volume on the PC (an image, or the
+  VMX itself as /dev/sdX if you may open it). `make test` runs its self-test too (8 MB volume, nested folders, a
+  folder past 256 entries, a full volume, re-mounting, the VMX layout).
+- Checked against the real Xbox kernel's FATX driver: vmx-world `tools/kernel_fatx_test.sh` puts a volume we made on
+  xemu's hard-disk partition 3, the kernel lists and reads all of it (sizes and checksums match), then writes, replaces
+  and deletes files, and we read those back. PASS.
+- Firmware: `core/ui.c` has the MEMORY UNIT screen (vmx_link: CONNECTED, DON'T UNPLUG while the host reads/writes,
+  B: EJECT). The PC build (`build/vmxhost`) keeps everything in `outdir/vmx.mu` and plays the games installed there
+  (script line `link on|off`).
+- CoreS3 (`esp32/src/mu.cpp`): the volume lives in the old LittleFS partition ("spiffs", 3.4 MB: about what the real
+  VMX's 8 MB flash leaves after the firmware), 512-byte sectors over a one-block 4 KB write-back cache. TinyUSB mass
+  storage (USB-OTG mode; `ARDUINO_USB_MODE=0`, no USB serial any more: MSC only, the safest for the Xbox) presents it.
+  When a USB host configures the VMX (an Xbox through a controller adapter, or a PC) the VMX becomes its memory unit
+  and shows MEMORY UNIT; when the host ejects it, the cable comes out or B is pressed it lets go, and restarts if the
+  host wrote anything (so games, records and settings are read again). First start: LittleFS's games and saves and
+  the NVS records are moved onto the new volume. Uploads over Wi-Fi (`tools/push_game.sh`) install onto the volume;
+  DELETE is now `/game?id=56581001`.
+- Builds (flash 33%, RAM 53%) but NOT on the rig: vmx.local was offline. To put it on: `cd esp32 && pio run -e ota -t
+  upload`. USB flashing now needs download mode (hold the CoreS3's reset ~3 s) since USB is the memory unit.
+- Not tested yet: a real Xbox reading the rig (needs an Xbox controller-port-to-USB adapter, or the VMX's own board),
+  and a PC mounting it (Linux sees an 3.4 MB disk with an unknown file system; build/vmxmu reads it).
+- Flash wear: no wear levelling yet (the cluster table's 4 KB block is rewritten on every file change; NOR flash
+  takes ~100k erases). Fine for testing; a real VMX wants a wear-levelling layer under the volume.

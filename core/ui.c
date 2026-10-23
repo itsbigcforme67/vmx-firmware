@@ -33,6 +33,7 @@ static struct {
   float ct0, dialLen, sendLen;
 } S;
 static uint32_t nowMs; static int curHeld;
+static int linked; static uint32_t linkBusyMs;
 static float clock_s(void) { return nowMs / 1000.0f; }   // the call runs on real time, with its sound
 
 static VmxRec *rec(const char *id) {
@@ -371,6 +372,25 @@ static void press(int b) {
   }
 }
 
+// ---------------------------------------------------------------- the memory unit link (vmxfw.h)
+static void drawLink(void) {
+  s_clear(&lcd, 0);
+  s_pill(&lcd, 2, 1, 60, 9, PILL_FILL, 1); s_centre(&lcd, 3, "MEMORY UNIT", 0);
+  s_big(&lcd, 32 - tw("VMX"), 16, "VMX", 2);
+  int busy = nowMs - linkBusyMs < 400;
+  s_centre(&lcd, 34, "CONNECTED", 1);
+  if (busy) { for (int i = 0; i < 4; i++) if (((nowMs / 90) & 3) == (uint32_t)i) s_fill(&lcd, 23 + i * 5, 44, 3, 3, 1); else s_rect(&lcd, 23 + i * 5, 44, 3, 3, 1);
+              s_centre(&lcd, 56, "DON'T UNPLUG", 1); }
+  else s_centre(&lcd, 56, "B: EJECT", 1);
+}
+void vmx_link(int on) {
+  if (on && !linked) { if (S.screen == SC_PLAY) close_game(); snd_hangup(); }
+  linked = on;
+  if (!on && S.screen != SC_OFF) go(SC_MAIN);
+}
+void vmx_link_busy(void) { linkBusyMs = nowMs ? nowMs : 1; }
+int vmx_linked(void) { return linked; }
+
 // ---------------------------------------------------------------- the frame
 static int prevHeld; static uint32_t sideAt, lastMs; static int sideDown;
 #define LONG_MS 700
@@ -385,9 +405,9 @@ void vmx_init(void) {
   plat_load("settings", &SET, sizeof SET); plat_load("recs", RECS, sizeof RECS);
   memset(&S, 0, sizeof S); S.screen = SC_OFF;
 }
-const uint8_t *vmx_screen(void) { return S.screen == SC_PLAY && S.playing ? S.g->draw() : lcdBuf; }
+const uint8_t *vmx_screen(void) { return S.screen == SC_PLAY && S.playing && !linked ? S.g->draw() : lcdBuf; }
 int vmx_bright(void) { return SET.bright; }
-int vmx_on(void) { return S.screen != SC_OFF; }
+int vmx_on(void) { return linked || S.screen != SC_OFF; }
 void vmx_frame(uint32_t ms, int held) {
   if (!lastMs) {                                         // power-up: pick this VMX's serial once, then boot
     lastMs = ms ? ms : 1;
@@ -397,6 +417,10 @@ void vmx_frame(uint32_t ms, int held) {
   float raw = (ms - lastMs) / 1000.0f, dt = raw < 0.05f ? raw : 0.05f; lastMs = ms; nowMs = ms; S.t += dt;
   // buttons: edges into press(); the side button decides on release (short = back, long = power)
   int down = held & ~prevHeld, up = prevHeld & ~held; prevHeld = held; curHeld = held;
+  if (linked) {                                          // a memory unit: nothing else runs
+    if ((down & (B_B | B_SIDE)) && nowMs - linkBusyMs >= 400) { backSnd(); plat_link_eject(); }
+    if (linked) { drawLink(); return; }
+  }
   if (down & B_SIDE) { sideAt = ms; sideDown = 1; }
   if ((up & B_SIDE) && sideDown) { sideDown = 0; if (ms - sideAt > LONG_MS) power(); else press(B_SIDE); }
   if (sideDown && ms - sideAt > LONG_MS) { sideDown = 0; power(); }

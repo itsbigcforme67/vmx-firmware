@@ -1,12 +1,12 @@
 // VMX firmware on the M5Stack CoreS3 + Faces Bottom3 + Gamepad3. The firmware is ../core (vmxfw.h); this file is
 // the hardware: the 64x64 screen drawn 3x in the middle of the CoreS3's panel, the pad, the speaker as the beeper,
-// saves in flash (NVS), the clock for score dates.
+// the clock for score dates, and the VMX's storage: a memory-unit volume in flash, which is also a USB memory unit
+// (mu.cpp; games, saves, settings and records all live on it).
 //   Gamepad3: D-pad, A, B as the VMX's; SELECT or START = the VMX's side button (short = back, hold = power).
 //   Without the pad: touch the screen's left half for the D-pad (by where you touch), right top = B, right bottom = A.
 #include <M5Unified.h>
 #include <Preferences.h>
 #include <esp_heap_caps.h>
-#include <LittleFS.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include <ArduinoOTA.h>
@@ -14,6 +14,8 @@
 #include <StreamString.h>
 #include "../../core/vmxfw.h"
 #include "games_builtin.h"
+#include "mu.h"
+#include "../../core/vmxvol.h"
 extern "C" uint32_t (*vmx_micros)(void);
 extern "C" void vmx_stats_text(char *b, int n);
 extern "C" volatile uint16_t vx_curop, vx_curm;
@@ -31,27 +33,13 @@ extern "C" void *plat_alloc(size_t n) {
   if (!p) Serial.printf("plat_alloc(%u) failed\n", (unsigned)n);
   return p;
 }
-// firmware settings and records go to NVS; games' own saves (keys "g<id>", up to 16 KB) to files in /saves
 extern "C" void *plat_alloc_fast(size_t n) {
   if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < n + 50 * 1024 || heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < n) return NULL;   // leave Wi-Fi 50 KB
   return heap_caps_calloc(1, n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
-extern "C" int plat_load(const char *key, void *buf, int max) {
-  if (key[0] == 'g') {
-    File f = LittleFS.open(String("/saves/") + key + ".bin", "r"); if (!f) return 0;
-    int n = (int)f.read((uint8_t *)buf, (size_t)max); f.close(); return n;
-  }
-  if (!prefs.isKey(key)) return 0;
-  return (int)prefs.getBytes(key, buf, (size_t)max);
-}
-extern "C" void plat_save(const char *key, const void *buf, int n) {
-  if (key[0] == 'g') {
-    LittleFS.mkdir("/saves");
-    File f = LittleFS.open(String("/saves/") + key + ".bin", "w"); if (f) { f.write((const uint8_t *)buf, (size_t)n); f.close(); }
-    return;
-  }
-  prefs.putBytes(key, buf, (size_t)n);
-}
+// everything the firmware keeps: files on the memory-unit volume (56580001\VMX\<key>.BIN; core/vmxvol.h)
+extern "C" int plat_load(const char *key, void *buf, int max) { return vmx_linked() ? 0 : vol_load(mu_vol(), key, buf, max); }
+extern "C" void plat_save(const char *key, const void *buf, int n) { if (!vmx_linked()) { vol_save(mu_vol(), key, buf, n); mu_flush(); } }
 extern "C" int plat_day(void) {
   auto dt = M5.Rtc.getDateTime();
   if (dt.date.year < 2001 || dt.date.year > 2100) return -1;
@@ -153,7 +141,7 @@ void setup() {
   M5.Speaker.begin();
   M5.Speaker.setVolume(140);
   drawFrame();
-  if (!LittleFS.begin(true)) Serial.println("LittleFS failed");
+  mu_begin(prefs);
   loadGames();
   WiFi.mode(WIFI_STA); WiFi.setHostname("vmx"); WiFi.begin();        // the network saved by Wi-Fi setup, if any
   xTaskCreatePinnedToCore(profTask, "prof", 2048, NULL, 1, NULL, 0);
@@ -196,7 +184,7 @@ static void hookCommand(int c, Print &out) {
 static WiFiManager wm;
 static WebServer web(80);
 static bool portal = false, netUp = false, otaBusy = false;
-static File upFile; static String upName; static bool upOk = false;
+static uint8_t *upBuf; static size_t upLen; static bool upOk = false; static const size_t UPMAX = 512 * 1024;
 static void otaScreen(int pct) {
   M5.Display.fillRect(60, 214, 200, 22, 0x18E3);
   M5.Display.setTextColor(0xFFFF, 0x18E3); M5.Display.setTextDatum(middle_center); M5.Display.setFont(&fonts::Font2);
@@ -214,31 +202,30 @@ static void netStart() {                         // once connected: OTA + the li
   ArduinoOTA.begin();
   const char *hdrs[] = { "X-VMX-Key" }; web.collectHeaders(hdrs, 1);
   web.on("/", HTTP_GET, []() {
-    String s = "VMX (CoreS3 rig)\ngames on flash:\n";
-    File d = LittleFS.open("/games"); if (d) for (File f = d.openNextFile(); f; f = d.openNextFile()) s += String("  ") + f.name() + " " + f.size() + "\n";
-    s += "built in:\n"; for (int i = 0; i < NBUILTIN; i++) s += String("  ") + BUILTIN[i].name + "\n";
+    String s = "VMX (CoreS3 rig)\ngames on the memory unit:\n";
+    uint32_t ids[32]; int n = vmx_linked() ? 0 : vol_games(mu_vol(), ids, 32);
+    for (int i = 0; i < n; i++) { char p[40]; vol_game_path(ids[i], p); s += String("  ") + String(ids[i], HEX) + " " + fatx_size(mu_vol(), p) + "\n"; }
+    s += String(vmx_linked() ? "(linked to a USB host)\n" : "") + (fatx_free_bytes(mu_vol()) / 1024) + " KB free\nbuilt in:\n";
+    for (int i = 0; i < NBUILTIN; i++) s += String("  ") + BUILTIN[i].name + "\n";
     web.send(200, "text/plain", s);
   });
-  // POST /game?name=BLOX.VXP, body = the file (multipart "file"); the VMX restarts to load it
+  // POST /game (multipart "file" = a GAME.VXP): installed on the memory unit by its ID; the VMX restarts to load it
   web.on("/game", HTTP_POST, []() {
     if (!authed()) return;
     web.send(upOk ? 200 : 400, "text/plain", upOk ? "ok, restarting\n" : "upload failed\n");
     if (upOk) { delay(200); ESP.restart(); }
   }, []() {
     HTTPUpload &u = web.upload();
-    if (u.status == UPLOAD_FILE_START) {
-      upOk = false; if (web.header("X-VMX-Key") != OTA_PASSWORD) return;
-      upName = u.filename; int sl = upName.lastIndexOf('/'); if (sl >= 0) upName = upName.substring(sl + 1);
-      upName.toUpperCase(); if (!upName.endsWith(".VXP") || upName.length() > 16) return;
-      LittleFS.mkdir("/games"); upFile = LittleFS.open("/games/" + upName + ".tmp", "w");
-    } else if (u.status == UPLOAD_FILE_WRITE) { if (upFile) upFile.write(u.buf, u.currentSize); }
-    else if (u.status == UPLOAD_FILE_END && upFile) {
-      upFile.close(); LittleFS.remove("/games/" + upName); LittleFS.rename("/games/" + upName + ".tmp", "/games/" + upName); upOk = true;
+    if (u.status == UPLOAD_FILE_START) { upOk = false; upLen = 0; if (web.header("X-VMX-Key") != OTA_PASSWORD || vmx_linked()) return; if (!upBuf) upBuf = (uint8_t *)ps_malloc(UPMAX); }
+    else if (u.status == UPLOAD_FILE_WRITE) { if (upBuf && upLen + u.currentSize <= UPMAX) { memcpy(upBuf + upLen, u.buf, u.currentSize); upLen += u.currentSize; } else upLen = UPMAX + 1; }
+    else if (u.status == UPLOAD_FILE_END && upBuf && upLen <= UPMAX) {
+      uint32_t id; char t[24]; upOk = vol_install_vxp(mu_vol(), upBuf, (int)upLen, &id, t); mu_flush();
+      if (upOk) Serial.printf("installed %08X %s\n", (unsigned)id, t);
     }
   });
-  web.on("/game", HTTP_DELETE, []() {               // DELETE /game?name=BLOX.VXP
+  web.on("/game", HTTP_DELETE, []() {               // DELETE /game?id=56581001
     if (!authed()) return;
-    String n = web.arg("name"); n.toUpperCase(); bool ok = n.endsWith(".VXP") && LittleFS.remove("/games/" + n);
+    uint32_t id = strtoul(web.arg("id").c_str(), NULL, 16); bool ok = id && !vmx_linked() && vol_remove(mu_vol(), id); mu_flush();
     web.send(ok ? 200 : 404, "text/plain", ok ? "deleted, restarting\n" : "no such game\n"); if (ok) { delay(200); ESP.restart(); }
   });
   web.on("/hook", HTTP_POST, []() {                    // the serial test hook over Wi-Fi: c = letters (tools/drive.py)
@@ -277,21 +264,21 @@ extern "C" void plat_wifi_setup(void) {
   wm.startConfigPortal("VMX-SETUP"); portal = true;
 }
 
-// games: built-in packages, then any uploaded to flash (/games/*.VXP), kept in PSRAM for the session
+// games: built-in packages, then the ones installed on the memory unit, kept in PSRAM for the session
 static void loadGames() {
   for (int i = 0; i < NBUILTIN; i++) vmx_add_game(BUILTIN[i].data, BUILTIN[i].len);
-  File d = LittleFS.open("/games"); if (!d) return;
-  for (File f = d.openNextFile(); f; f = d.openNextFile()) {
-    String n = f.name(); if (!n.endsWith(".VXP")) continue;
-    size_t len = f.size(); uint8_t *buf = (uint8_t *)plat_alloc(len);
-    if (buf && f.read(buf, len) == len && vmx_add_game(buf, len) == 0) Serial.printf("game %s (%u bytes)\n", n.c_str(), (unsigned)len);
-    else Serial.printf("game %s: not loaded\n", n.c_str());
+  uint32_t ids[32]; int n = vol_games(mu_vol(), ids, 32);
+  for (int i = 0; i < n; i++) {
+    char p[40]; vol_game_path(ids[i], p); int len = fatx_size(mu_vol(), p); uint8_t *buf = len > 0 ? (uint8_t *)plat_alloc((size_t)len) : NULL;
+    if (buf && fatx_read(mu_vol(), p, buf, len) == len && vmx_add_game(buf, (size_t)len) == 0) Serial.printf("game %08X (%d bytes)\n", (unsigned)ids[i], len);
+    else Serial.printf("game %08X: not loaded\n", (unsigned)ids[i]);
   }
 }
 
 
 void loop() {
   netLoop();
+  mu_loop();
   if (otaBusy) { delay(5); return; }
   M5.update();
   serialHook();

@@ -30,6 +30,14 @@ const char *plat_name(void);                // what ABOUT says the VMX is runnin
 int  plat_wifi(char lines[4][16]);          // SETTINGS > WIFI: status lines; returns how many (0 = no Wi-Fi here)
 void plat_wifi_setup(void);                 // SETTINGS > WIFI, A: start Wi-Fi setup
 
+// the VMX as a memory unit (core/vmxvol.h): while a USB host (the Xbox through a controller, or a PC) has its volume,
+// the platform calls vmx_link(1); the firmware stops touching storage and shows MEMORY UNIT until vmx_link(0).
+// B or the side button there asks the platform to let go (plat_link_eject); it then calls vmx_link(0) or restarts.
+void vmx_link(int on);
+void vmx_link_busy(void);                   // the host just read or wrote: shows WAIT for a moment
+int  vmx_linked(void);
+void plat_link_eject(void);
+
 // games in GAME.VXP files (managed code, runtime/vxrt.c): add them before vmx_init (the data must stay put)
 int  vmx_add_game(const uint8_t *vxp, size_t len);   // 0 = added, -1 = not a valid VXP
 void vmx_clear_games(void);                          // forget them all (then add again and call vmx_init)
