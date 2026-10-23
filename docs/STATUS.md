@@ -60,3 +60,10 @@ firmware (`tools/embed_vxp.py`), playable now.
 `games/junction/` - JS parity for 30000 ticks; in `make test`; built into the firmware (`tools/embed_vxp.py`), but the
 OTA upload failed: vmx.local was off the network. To flash: `cd esp32 && pio run -e ota -t upload`, or push only the
 game: `tools/push_game.sh build/games/JUNCTION.VXP`. Worst tick ~180k IL (Auto Bahn spiral) = ~25-50 ms on the device.
+
+## 2026-10-22: 9-BALL (pool)
+`games/pool/` - 9-ball vs the computer with a low 3D wireframe shooting view (decisions in microgames/docs/GAMES_LOG.md
+"9-BALL"). All-integer physics, so JS parity holds for 30000 ticks (3 seeds, demo + random presses); in `make test`.
+~7-16k IL a tick, worst ~300k. Built into the firmware (`tools/embed_vxp.py` + `pio run` OK) but NOT on the rig yet:
+vmx.local was off the network. To put it on: `tools/push_game.sh build/games/9-BALL.VXP`, or reflash
+`cd esp32 && pio run -e ota -t upload`.
