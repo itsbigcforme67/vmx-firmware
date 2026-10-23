@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define MAXVX 20
+#define MAXVX 32
 #define HEAP (128 * 1024)
 typedef struct {
   VmxGame g; uint32_t id; const uint8_t *code; size_t codeLen; uint8_t card[72];
@@ -140,11 +140,13 @@ static int record_(VxGame *g, VmxRec *r) {
   static int record##n(VmxRec *r) { return record_(&G[n], r); }
 SLOT(0) SLOT(1) SLOT(2) SLOT(3) SLOT(4) SLOT(5) SLOT(6) SLOT(7) SLOT(8) SLOT(9) SLOT(10) SLOT(11)
 SLOT(12) SLOT(13) SLOT(14) SLOT(15) SLOT(16) SLOT(17) SLOT(18) SLOT(19)
+SLOT(20) SLOT(21) SLOT(22) SLOT(23) SLOT(24) SLOT(25) SLOT(26) SLOT(27) SLOT(28) SLOT(29) SLOT(30) SLOT(31)
 #define FN(n) { art##n, start##n, tick##n, draw##n, record##n }
 static const struct { void (*art)(void *); void (*start)(uint32_t, int); void (*tick)(const VmxIn *, int);
   const uint8_t *(*draw)(void); int (*record)(VmxRec *); } FNS[MAXVX] = {
   FN(0), FN(1), FN(2), FN(3), FN(4), FN(5), FN(6), FN(7), FN(8), FN(9), FN(10), FN(11),
-  FN(12), FN(13), FN(14), FN(15), FN(16), FN(17), FN(18), FN(19) };
+  FN(12), FN(13), FN(14), FN(15), FN(16), FN(17), FN(18), FN(19),
+  FN(20), FN(21), FN(22), FN(23), FN(24), FN(25), FN(26), FN(27), FN(28), FN(29), FN(30), FN(31) };
 
 // ---- reading a GAME.VXP
 int vmx_add_game(const uint8_t *d, size_t len) {

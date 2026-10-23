@@ -80,3 +80,9 @@ passes at the default 100 and with `CHIPS=15` (going broke). vxrun takes `--chip
 Limits raised for 14+ games: MAXVX 20 (game_vx.c), VMX_GAMES 24, records/art/CALL arrays 24 (an older 16-entry
 "recs" save loads into the front). Host check: GAMES shows 15 cards. 14 built-in VXPs: flash 27%, RAM 42%; firmware
 builds; rig offline, so not flashed.
+
+## 2026-10-22 end: 13 more casino tables (27 managed games)
+hilo war baccarat threecard reddog letitride craps sicbo chuckaluck keno bigsix scratch frogs: each has JS parity for
+30000 ticks (and CHIPS=15); all in `make test`. Limits raised to MAXVX 32 / 36 records. corlib: String.Concat(params
+string[]/object[]) (C# turns a + b + c + d + e into one array call). VXP file names are now letters and digits only
+(build_game.sh). Owner: not every game needs to be on the VMX at once; the firmware still embeds them all for tests.

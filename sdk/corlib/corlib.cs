@@ -45,6 +45,9 @@ namespace System {
     [MethodImpl(MethodImplOptions.InternalCall)] public static extern string Concat(string a, string b);
     [MethodImpl(MethodImplOptions.InternalCall)] public static extern string Concat(string a, string b, string c);
     public static string Concat(string a, string b, string c, string d) { return Concat(Concat(a, b), Concat(c, d)); }
+    // a + b + c + d + e...: C# hands five or more pieces over as one array
+    public static string Concat(params string[] v) { string r = ""; for (int i = 0; i < v.Length; i++) r = Concat(r, v[i] == null ? "" : v[i]); return r; }
+    public static string Concat(params object[] v) { string r = ""; for (int i = 0; i < v.Length; i++) r = Concat(r, v[i] == null ? "" : v[i].ToString()); return r; }
     public static string Concat(object a, object b) { return Concat(a == null ? "" : a.ToString(), b == null ? "" : b.ToString()); }
     [MethodImpl(MethodImplOptions.InternalCall)] public static extern bool Equals(string a, string b);
     public static bool operator ==(string a, string b) { return Equals(a, b); }
