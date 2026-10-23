@@ -51,7 +51,7 @@ typedef struct VmxGame {
   const uint8_t *(*draw)(void);
   int  (*record)(VmxRec *r);                // update r from the game; 1 = changed
 } VmxGame;
-extern VmxGame *VMX_GAMES[16];
+extern VmxGame *VMX_GAMES[24];
 extern int VMX_NGAMES;
 void games_init(void);                      // the managed games added so far, then the built-in ones
 

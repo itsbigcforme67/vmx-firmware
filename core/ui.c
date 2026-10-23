@@ -21,23 +21,24 @@ enum { SC_OFF, SC_BOOT, SC_MAIN, SC_GAMES, SC_SAVES, SC_ERASE, SC_SETTINGS, SC_A
 // ---------------------------------------------------------------- state and saves
 static struct { uint8_t sound, bright, pad[2]; uint32_t serial; } SET = { 1, 2, {0, 0}, 0 };
 typedef struct { char id[12]; VmxRec r; } SavedRec;
-static SavedRec RECS[16];
+#define NREC 24                                   // an older, shorter "recs" save loads into the front
+static SavedRec RECS[NREC];
 static struct {
   int screen; float t, boot, idle, flashT; char flash[16];
   int main, game, save, erase, setSel, callSel; float mainPos, gamePos;
   // playing
   int playing, demo, attract, prevHeld, latch; float acc, since; const VmxGame *g; int k;
   // the call
-  ScoreRec crec[16]; int cidx[16], cn; uint8_t msg[16 + 16 * REC_LEN + 2]; int mlen; char code[5], digits[24];
+  ScoreRec crec[24]; int cidx[24], cn; uint8_t msg[16 + 24 * REC_LEN + 2]; int mlen; char code[5], digits[24];
   float ct0, dialLen, sendLen;
 } S;
 static uint32_t nowMs; static int curHeld;
 static float clock_s(void) { return nowMs / 1000.0f; }   // the call runs on real time, with its sound
 
 static VmxRec *rec(const char *id) {
-  for (int i = 0; i < 16; i++) if (!strcmp(RECS[i].id, id)) return &RECS[i].r;
-  for (int i = 0; i < 16; i++) if (!RECS[i].id[0]) { snprintf(RECS[i].id, sizeof RECS[i].id, "%s", id); return &RECS[i].r; }
-  return &RECS[15].r;
+  for (int i = 0; i < NREC; i++) if (!strcmp(RECS[i].id, id)) return &RECS[i].r;
+  for (int i = 0; i < NREC; i++) if (!RECS[i].id[0]) { snprintf(RECS[i].id, sizeof RECS[i].id, "%s", id); return &RECS[i].r; }
+  return &RECS[NREC - 1].r;
 }
 static void saveRecs(void) { plat_save("recs", RECS, sizeof RECS); }
 static void saveSet(void) { plat_save("settings", &SET, sizeof SET); }
@@ -111,8 +112,8 @@ static void drawBoot(float t) {
 }
 
 // ---------------------------------------------------------------- menus
-static uint8_t glyphBuf[4][144], artBuf[16][576];
-static Surf GLYPH[4], ART[16];
+static uint8_t glyphBuf[4][144], artBuf[24][576];
+static Surf GLYPH[4], ART[24];
 static void menuGlyphs(void) {
   for (int k = 0; k < 4; k++) {
     Surf *s = &GLYPH[k]; *s = (Surf){ 12, 12, glyphBuf[k] };
@@ -219,7 +220,7 @@ static void flash(const char *m) { snprintf(S.flash, sizeof S.flash, "%s", m); S
 static int day_now(void) { int d = plat_day(); return d < 0 ? 0 : d; }
 static int callRecords(void) {         // fills S.crec / S.cidx with every score not sent yet; returns how many
   int n = 0;
-  for (int i = 0; i < VMX_NGAMES && n < 16; i++) {
+  for (int i = 0; i < VMX_NGAMES && n < 23; i++) {
     const VmxGame *g = VMX_GAMES[i]; VmxRec *r = rec(g->id); if (!g->tid) continue;
     int32_t score = g->wld ? r->w : r->best;
     if (!score && !(r->l || r->d)) continue;
@@ -231,7 +232,7 @@ static int callRecords(void) {         // fills S.crec / S.cidx with every score
   // VMX CASINO's chip stash (vmx-world/docs/CASINO.md): score = chips now, field 1 = the most ever held, field 2 =
   // chips cashed out at the Xbox; listed once chips have been played
   const VmxBank *bk = vmx_bank();
-  if (n < 16 && (bk->staked || bk->paid) && !(bk->sentOk && bk->sent == bk->chips)) {
+  if (n < 24 && (bk->staked || bk->paid) && !(bk->sentOk && bk->sent == bk->chips)) {
     uint16_t pk = bk->peak > 65535 ? 65535 : (uint16_t)bk->peak, ca = bk->cashed > 65535 ? 65535 : (uint16_t)bk->cashed;
     S.crec[n] = (ScoreRec){ 0x56581F00u, 0, 0, (uint16_t)day_now(), bk->chips, { pk, ca, 0 } }; S.cidx[n++] = -1;
   }
@@ -380,7 +381,7 @@ static float chase(float cur, float target, int n, float dt) {
 }
 void vmx_init(void) {
   games_init(); xmask_init(); menuGlyphs();
-  for (int i = 0; i < VMX_NGAMES && i < 16; i++) { ART[i] = (Surf){ 24, 24, artBuf[i] }; VMX_GAMES[i]->art(&ART[i]); }
+  for (int i = 0; i < VMX_NGAMES && i < 24; i++) { ART[i] = (Surf){ 24, 24, artBuf[i] }; VMX_GAMES[i]->art(&ART[i]); }
   plat_load("settings", &SET, sizeof SET); plat_load("recs", RECS, sizeof RECS);
   memset(&S, 0, sizeof S); S.screen = SC_OFF;
 }

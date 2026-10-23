@@ -74,3 +74,9 @@ The firmware keeps the bank in save `casino` (core/game_vx.c: 100 to start, dail
 CALL sends it as record 56581F00 (score = chips, f1 = peak, f2 = cashed). BLACKJACK and 9-BALL use it; parity
 passes at the default 100 and with `CHIPS=15` (going broke). vxrun takes `--chips N`. Firmware builds; not on the rig
 (offline). Design: vmx-world/docs/CASINO.md.
+
+## 2026-10-22 later: VIDEO POKER, ROULETTE, SLOTS
+`games/poker`, `games/roulette`, `games/slots` (casino=1): JS parity for 30000 ticks and with CHIPS=15; in `make test`.
+Limits raised for 14+ games: MAXVX 20 (game_vx.c), VMX_GAMES 24, records/art/CALL arrays 24 (an older 16-entry
+"recs" save loads into the front). Host check: GAMES shows 15 cards. 14 built-in VXPs: flash 27%, RAM 42%; firmware
+builds; rig offline, so not flashed.
