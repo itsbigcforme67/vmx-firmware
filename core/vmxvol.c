@@ -47,6 +47,9 @@ void vol_key_path(const char *key, char out[64], uint32_t *folder) {
   if ((key[0] == 'g' || key[0] == 'r') && strlen(key) == 9 && sscanf(key + 1, "%8x", &id) == 1 && id) {
     *folder = id; snprintf(out, 64, VOL_TITLE "\\%08X0000\\%s", (unsigned)id, key[0] == 'g' ? "SAVE.BIN" : "RECORD.BIN"); return;
   }
+  if (key[0] == 'd' && strlen(key) > 10 && key[9] == ':' && sscanf(key + 1, "%8x", &id) == 1 && id) {
+    *folder = id; snprintf(out, 64, VOL_TITLE "\\%08X0000\\DATA\\%.12s", (unsigned)id, key + 10); return;
+  }
   snprintf(out, 64, VOL_TITLE "\\%.20s.BIN", key);
 }
 int vol_load(Fatx *v, const char *key, void *buf, int max) { char p[64]; uint32_t f; vol_key_path(key, p, &f); int n = fatx_read(v, p, buf, max); return n > 0 ? n : 0; }

@@ -353,15 +353,20 @@ static void strArg(Vx *vm, uint32_t s, char *b, int n) {     // a string argumen
   needObj(vm, s); uint32_t l = arrLen(vm, s); if (l > (uint32_t)n - 1) l = (uint32_t)n - 1;
   for (uint32_t i = 0; i < l; i++) { uint16_t c = strChars(vm, s)[i]; b[i] = c < 128 ? (char)c : '?'; } b[l] = 0;
 }
-static void n_pkgLen(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) {
-  char nm[32]; strArg(vm, a[0].u, nm, sizeof nm); RET_I(vm->host->file ? vm->host->file(nm, 0, NULL, 0) : -1);
+typedef int (*FileFn)(const char *, int, uint8_t *, int);
+static void fileLen(Vx *vm, FileFn f, Slot *a, Slot *ret, uint8_t *rt) {
+  char nm[32]; strArg(vm, a[0].u, nm, sizeof nm); RET_I(f ? f(nm, 0, NULL, 0) : -1);
 }
-static void n_pkgRead(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) {
+static void fileRead(Vx *vm, FileFn f, const char *what, Slot *a, Slot *ret, uint8_t *rt) {
   char nm[32]; strArg(vm, a[0].u, nm, sizeof nm);
   uint32_t d = a[2].u; int32_t off = a[1].i, idx = a[3].i, n = a[4].i; needObj(vm, d);
-  if (idx < 0 || n < 0 || off < 0 || (uint32_t)(idx + n) > arrLen(vm, d) || (hw(vm, d)[1] >> 24) != VK_U1) fail(vm, "PACKAGE.READ: BAD BUFFER%s", NULL);
-  RET_I(vm->host->file ? vm->host->file(nm, off, data(vm, d) + idx, n) : 0);
+  if (idx < 0 || n < 0 || off < 0 || (uint32_t)(idx + n) > arrLen(vm, d) || (hw(vm, d)[1] >> 24) != VK_U1) fail(vm, "%s: BAD BUFFER", what);
+  RET_I(f ? f(nm, off, data(vm, d) + idx, n) : 0);
 }
+static void n_pkgLen(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { fileLen(vm, vm->host->file, a, ret, rt); }
+static void n_pkgRead(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { fileRead(vm, vm->host->file, "PACKAGE.READ", a, ret, rt); }
+static void n_dataLen(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { fileLen(vm, vm->host->data, a, ret, rt); }
+static void n_dataRead(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { fileRead(vm, vm->host->data, "STORAGE.READDATA", a, ret, rt); }
 static int chips(Vx *vm, int op, int n) { return vm->host->chips ? vm->host->chips(op, n) : 0; }
 static void n_chBal(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { RET_I(chips(vm, 0, 0)); }
 static void n_chBet(Vx *vm, Slot *a, uint8_t *at, Slot *ret, uint8_t *rt) { RET_I(a[0].i >= 0 && chips(vm, 1, a[0].i) ? 1 : 0); }
@@ -383,6 +388,7 @@ static const struct { const char *name; Native fn; } NATIVES[] = {
   { "Microsoft.Vmx.Screen::Fill/5", n_scrFill }, { "Microsoft.Vmx.Screen::Text/4", n_scrText },
   { "Microsoft.Vmx.Beeper::Tone/3", n_tone }, { "Microsoft.Vmx.Scores::Report/4", n_report },
   { "Microsoft.Vmx.Storage::Load/0", n_load }, { "Microsoft.Vmx.Storage::Save/1", n_save }, { "Microsoft.Vmx.Storage::LoadOther/1", n_loadOther },
+  { "Microsoft.Vmx.Storage::DataLength/1", n_dataLen }, { "Microsoft.Vmx.Storage::ReadData/5", n_dataRead },
   { "Microsoft.Vmx.Chips::Balance/0", n_chBal }, { "Microsoft.Vmx.Chips::Bet/1", n_chBet }, { "Microsoft.Vmx.Chips::Pay/1", n_chPay }, { "Microsoft.Vmx.Chips::Bonus/0", n_chBonus },
 };
 

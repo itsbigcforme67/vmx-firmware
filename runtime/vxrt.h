@@ -33,6 +33,9 @@ typedef struct {                     // what the game can reach: the platform fi
   // VMX CASINO's chip bank (Microsoft.Vmx.Chips): op 0 balance, 1 bet n (1 = taken, 0 = not enough), 2 pay n,
   // 3 today's bonus; NULL = no bank (every call answers 0)
   int  (*chips)(int op, int n);
+  // a file the Xbox put in this game's save folder (DATA\<name>, Microsoft.Vmx.Storage.ReadData), read only: as file;
+  // NULL = none
+  int  (*data)(const char *name, int offset, uint8_t *dst, int n);
 } VxHost;
 #define VX_SAVE_MAX 16384
 

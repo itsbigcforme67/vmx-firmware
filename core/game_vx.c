@@ -52,6 +52,24 @@ static int h_file(const char *name, int off, uint8_t *dst, int n) {
   }
   return dst ? 0 : -1;
 }
+// files the Xbox gave the game (Storage.ReadData: <ID>0000\DATA\<name>, the "d<ID>:<name>" key), read whole into one
+// buffer the first time the game asks (made once, DATA_MAX) and kept until the next start
+#define DATA_MAX (64 * 1024)
+static uint8_t *dataBuf; static int dataLen; static char dataName[16];
+static int h_data(const char *name, int off, uint8_t *dst, int n) {
+  if (!cur || strlen(name) > 12) return dst ? 0 : -1;
+  if (strcmp(dataName, name)) {
+    char key[32]; snprintf(key, sizeof key, "d%08x:%s", (unsigned)cur->id, name);
+    if (!dataBuf) dataBuf = plat_alloc(DATA_MAX + 1);
+    dataLen = dataBuf ? plat_load(key, dataBuf, DATA_MAX + 1) : 0;
+    if (dataLen <= 0 || dataLen > DATA_MAX) dataLen = -1;   // none, or too big for the VMX
+    snprintf(dataName, sizeof dataName, "%s", name);
+  }
+  if (!dst) return dataLen;
+  if (dataLen < 0 || off < 0 || off >= dataLen) return 0;
+  if (n > dataLen - off) n = dataLen - off;
+  memcpy(dst, dataBuf + off, (size_t)n); return n;
+}
 // VMX CASINO's chip bank (Microsoft.Vmx.Chips), kept by the firmware in its own save so every casino game shares it.
 // vmx-world/docs/CASINO.md: starts at 100; once a day, a casino game started with under STIPEND chips tops the bank
 // up to STIPEND; demos play from a scratch bank of 100.
@@ -90,7 +108,7 @@ static void bankStart(VxGame *g, int demo) {
   int fresh = d >= 0 ? (uint16_t)d != bank.stipendDay : !bootStipend;
   if (fresh && bank.chips < STIPEND) { bonus = STIPEND - bank.chips; bank.chips = STIPEND; bank.stipendDay = (uint16_t)(d >= 0 ? d : 0xFFFE); bootStipend = 1; bankDirty = 1; bankSave(); }
 }
-static const VxHost HOST = { scr, h_tone, h_report, h_load, h_save, h_text, h_file, h_chips };
+static const VxHost HOST = { scr, h_tone, h_report, h_load, h_save, h_text, h_file, h_chips, h_data };
 
 // ---- the VmxGame calls, for game number n
 static void errorScreen(void) {
@@ -106,7 +124,7 @@ static void art_(VxGame *g, void *p) {
   for (int y = 0; y < 24; y++) for (int x = 0; x < 24; x++) s_px(s, x, y, (g->card[y * 3 + x / 8] >> (7 - x % 8)) & 1);
 }
 static void start_(VxGame *g, uint32_t seed, int demo) {
-  cur = g; err[0] = 0; statInstr0 = 0;
+  cur = g; err[0] = 0; statInstr0 = 0; dataName[0] = 0;
   bankStart(g, demo);
   if (!mem || !heapMem) { snprintf(err, sizeof err, "NO MEMORY"); g->g.usesB = 0; return; }
   const uint8_t *code = g->code;

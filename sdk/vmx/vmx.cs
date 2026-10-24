@@ -48,6 +48,10 @@ namespace Microsoft.Vmx {
     [MethodImpl(MethodImplOptions.InternalCall)] public static extern void Save(byte[] data);
     // another game's save, read only (gameId as in its GAME.VXP), or null
     [MethodImpl(MethodImplOptions.InternalCall)] public static extern byte[] LoadOther(int gameId);
+    // files the Xbox put in this game's save folder (DATA\name, e.g. FOLD BUILDER's levels for FOLD ROOMS), read
+    // only and in pieces, as Package: the length (-1 = none), and up to count bytes from offset (returns how many)
+    [MethodImpl(MethodImplOptions.InternalCall)] public static extern int DataLength(string name);
+    [MethodImpl(MethodImplOptions.InternalCall)] public static extern int ReadData(string name, int offset, byte[] dst, int index, int count);
   }
 
   // VMX CASINO's shared chip bank: every casino game (game.ini casino=1) sees the same balance, so chips won at one
