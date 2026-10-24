@@ -52,15 +52,16 @@ static int wrSec(void *, uint32_t s, int n, const uint8_t *buf) {
 static USBMSC msc;
 static volatile bool hostUp, hostWrote, hostEject, declined;
 static bool linkedNow;
+// the volume is always there for the host (a memory unit is ready the moment it's plugged in: hosts' error paths for
+// "not ready" / stalled reads are where nxdk's driver broke on the real Xbox, 24 Oct 2026); the firmware stops
+// writing once linked (mu_loop), and anything the host wrote restarts the VMX when it lets go
 static int32_t onRead(uint32_t lba, uint32_t off, void *buf, uint32_t n) {
-  if (!linkedNow) return -1;
   xSemaphoreTake(lock, portMAX_DELAY);
   int ok = (off % 512 == 0 && n % 512 == 0) ? rdSec(NULL, lba + off / 512, (int)(n / 512), (uint8_t *)buf) : 0;
   lastIoMs = millis(); xSemaphoreGive(lock);
   return ok ? (int32_t)n : -1;
 }
 static int32_t onWrite(uint32_t lba, uint32_t off, uint8_t *buf, uint32_t n) {
-  if (!linkedNow) return -1;
   xSemaphoreTake(lock, portMAX_DELAY);
   int ok = (off % 512 == 0 && n % 512 == 0) ? wrSec(NULL, lba + off / 512, (int)(n / 512), buf) : 0;
   hostWrote = true; lastIoMs = millis(); xSemaphoreGive(lock);
@@ -70,11 +71,11 @@ static bool onStartStop(uint8_t, bool start, bool loadEject) { if (loadEject && 
 static void onUsb(void *, esp_event_base_t base, int32_t id, void *) {
   if (base != ARDUINO_USB_EVENTS) return;
   if (id == ARDUINO_USB_STARTED_EVENT) hostUp = true;
-  if (id == ARDUINO_USB_STOPPED_EVENT) { hostUp = false; declined = false; }
+  if (id == ARDUINO_USB_STOPPED_EVENT) { hostUp = false; if (declined) { declined = false; msc.mediaPresent(true); } }
 }
 
 static void endLink() {                               // let go of the host; restart if it changed the volume
-  msc.mediaPresent(false);
+  if (declined) msc.mediaPresent(false);              // (B / an eject: the host sees it taken out until replugged)
   xSemaphoreTake(lock, portMAX_DELAY); linkedNow = false; blkFlush(); xSemaphoreGive(lock);
   if (hostWrote) { Serial.println("memory unit: the host wrote, restarting"); delay(100); ESP.restart(); }
   vmx_link(0);
@@ -129,7 +130,7 @@ bool mu_begin(Preferences &prefs) {
   Serial.printf("memory unit: %u KB, %u KB free\n", (unsigned)(part->size / 1024), (unsigned)(fatx_free_bytes(&vol) / 1024));
   msc.vendorID("VMX"); msc.productID("VMX MEMORY UNIT"); msc.productRevision("1.0");
   msc.onRead(onRead); msc.onWrite(onWrite); msc.onStartStop(onStartStop);
-  msc.mediaPresent(false);
+  msc.mediaPresent(true);
   msc.begin(part->size / 512, 512);
   USB.onEvent(onUsb);
   USB.productName("VMX"); USB.manufacturerName("VMX");
@@ -139,9 +140,9 @@ bool mu_begin(Preferences &prefs) {
 void mu_flush() { xSemaphoreTake(lock, portMAX_DELAY); blkFlush(); xSemaphoreGive(lock); }
 void mu_loop() {
   if (hostUp && !linkedNow && !declined) {            // a host: become its memory unit
-    mu_flush(); hostWrote = hostEject = false; vmx_link(1);
+    mu_flush(); hostEject = false; vmx_link(1);
     xSemaphoreTake(lock, portMAX_DELAY); linkedNow = true; xSemaphoreGive(lock);
-    msc.mediaPresent(true); Serial.println("memory unit: linked");
+    Serial.println("memory unit: linked");
   }
   if (!linkedNow) return;
   if (millis() - lastIoMs < 400) vmx_link_busy();
