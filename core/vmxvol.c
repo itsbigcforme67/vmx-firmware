@@ -11,14 +11,23 @@ int vol_meta(char *out, int cap, const char *key, const char *value) {   // UTF-
   for (int i = 0; i < n; i++) { out[k++] = line[i]; out[k++] = 0; }
   return k;
 }
-int vol_open(Fatx *v) {
-  if (!fatx_mount(v) && !fatx_format(v, 0x564D5801u)) return 0;          // "VMX" + 1
+int vol_open(Fatx *v, uint32_t serial) {
+  if (!fatx_mount(v) && !fatx_format(v, serial ? serial : 0x564D5801u)) return 0;
   if (fatx_size(v, VOL_TITLE "\\TitleMeta.xbx") < 0) {
     char m[260]; int n = vol_meta(m, sizeof m, "TitleName", "VMX World");
     if (!fatx_write(v, VOL_TITLE "\\TitleMeta.xbx", m, n)) return 0;
   }
-  return fatx_size(v, VOL_TITLE "\\VMX.SYS") >= 0 || fatx_write(v, VOL_TITLE "\\VMX.SYS", "VMX\r\n", 5);
+  VmxSys sy;
+  if (serial && !vol_sys(v, &sy)) {
+    memset(&sy, 0, sizeof sy); memcpy(sy.magic, "VMX1", 4); sy.serial = serial; sy.day = 0xFFFF;
+    if (!fatx_write(v, VOL_TITLE "\\VMX.SYS", &sy, sizeof sy)) return 0;
+  }
+  return 1;
 }
+int vol_sys(Fatx *v, VmxSys *out) {
+  return fatx_read(v, VOL_TITLE "\\VMX.SYS", out, sizeof *out) == (int)sizeof *out && !memcmp(out->magic, "VMX1", 4) && out->serial;
+}
+void vol_serial_text(uint32_t s, char out[10]) { snprintf(out, 10, "%04X-%04X", (unsigned)(s >> 16), (unsigned)(s & 0xFFFF)); }
 static struct { uint32_t id; char title[24]; } names[48]; static int nnames;
 void vol_name(uint32_t id, const char *title) {
   int i = 0; while (i < nnames && names[i].id != id) i++;
@@ -32,6 +41,7 @@ const char *vol_title(uint32_t id) {
 }
 void vol_key_path(const char *key, char out[64], uint32_t *folder) {
   uint32_t id = 0; *folder = 0;
+  if (!strcmp(key, "sys")) { snprintf(out, 64, VOL_TITLE "\\VMX.SYS"); return; }
   if (!strcmp(key, "settings")) { snprintf(out, 64, VOL_TITLE "\\SETTINGS.BIN"); return; }
   if (!strcmp(key, "casino")) { *folder = VOL_CHIPS; snprintf(out, 64, VOL_TITLE "\\%08X0000\\CHIPS.BIN", (unsigned)VOL_CHIPS); return; }
   if ((key[0] == 'g' || key[0] == 'r') && strlen(key) == 9 && sscanf(key + 1, "%8x", &id) == 1 && id) {

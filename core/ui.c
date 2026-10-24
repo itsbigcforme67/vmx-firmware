@@ -15,12 +15,14 @@
 static uint8_t lcdBuf[64 * 64];
 static Surf lcd = { 64, 64, lcdBuf };
 static const char *MAIN[4] = { "GAMES", "SAVES", "SETTINGS", "CALL" };
-static const char *SETTINGS[4] = { "SOUND", "BRIGHT", "WIFI", "ABOUT" };
+static const char *SETTINGS[5] = { "SOUND", "BRIGHT", "NAME", "WIFI", "ABOUT" };
 enum { SC_OFF, SC_BOOT, SC_MAIN, SC_GAMES, SC_SAVES, SC_ERASE, SC_SETTINGS, SC_ABOUT, SC_WIFI, SC_PLAY,
-       SC_CALL, SC_CALLHOLD, SC_CALLDIAL, SC_CALLSEND, SC_CALLCODE };
+       SC_CALL, SC_CALLHOLD, SC_CALLDIAL, SC_CALLSEND, SC_CALLCODE, SC_NAME };
 
 // ---------------------------------------------------------------- state and saves
-static struct { uint8_t sound, bright, pad[2]; uint32_t serial; } SET = { 1, 2, {0, 0}, 0 };
+static struct { uint8_t sound, bright, pad[2]; uint32_t serial; } SET = { 1, 2, {0, 0}, 0 };   // (serial: older VMXs' own; now VMX.SYS)
+static VmxSys SYS;                                // who this VMX is (core/vmxvol.h): serial, owner's name
+static char nameEd[9]; static int nameAt;         // SETTINGS > NAME being edited
 typedef struct { char id[12]; VmxRec r; } SavedRec;
 #define NREC 36                                   // an older, shorter "recs" save loads into the front
 static SavedRec RECS[NREC];
@@ -203,18 +205,29 @@ static void drawSettings(void) {
   s_clear(&lcd, 0);
   s_pill(&lcd, 2, 1, 60, 9, PILL_FILL, 1); s_centre(&lcd, 3, "SETTINGS", 0);
   const char *BR[3] = { "LOW", "MID", "HIGH" };
-  const char *val[4] = { SET.sound ? "ON" : "OFF", BR[SET.bright % 3], ">", ">" };
-  for (int i = 0; i < 4; i++) { int y = 14 + i * 10, sel = i == S.setSel;
+  const char *val[5] = { SET.sound ? "ON" : "OFF", BR[SET.bright % 3], SYS.name[0] ? SYS.name : "-", ">", ">" };
+  for (int i = 0; i < 5; i++) { int y = 13 + i * 9, sel = i == S.setSel;
     if (sel) s_fill(&lcd, 2, y - 2, 60, 9, 1);
     s_text(&lcd, 5, y, SETTINGS[i], !sel); s_text(&lcd, 59 - tw(val[i]), y, val[i], !sel); }
   s_text(&lcd, 2, 59, "A: CHANGE", 1);
 }
 static void drawAbout(void) {
   s_clear(&lcd, 0);
-  s_big(&lcd, 32 - tw("VMX"), 4, "VMX", 2);
-  s_centre(&lcd, 20, "FIRMWARE", 1); s_centre(&lcd, 30, plat_name(), 1);
-  char b[16]; snprintf(b, sizeof b, "%d GAMES", VMX_NGAMES); s_centre(&lcd, 38, b, 1);
+  s_big(&lcd, 32 - tw("VMX"), 3, "VMX", 2);
+  char b[16]; s_centre(&lcd, 18, SYS.name[0] ? SYS.name : "NO NAME", 1);
+  vol_serial_text(SYS.serial, b); s_centre(&lcd, 26, b, 1); s_centre(&lcd, 36, plat_name(), 1);
+  snprintf(b, sizeof b, "%d GAME%s", VMX_NGAMES, VMX_NGAMES == 1 ? "" : "S"); s_centre(&lcd, 44, b, 1);
   s_centre(&lcd, 56, "B: BACK", 1);
+}
+static void drawName(void) {             // SETTINGS > NAME: the owner's name, 8 letters (World shows "<NAME>'S VMX")
+  s_clear(&lcd, 0);
+  s_pill(&lcd, 2, 1, 60, 9, PILL_FILL, 1); s_centre(&lcd, 3, "YOUR NAME", 0);
+  for (int i = 0; i < 8; i++) {
+    int x = 5 + i * 7; char c[2] = { nameEd[i], 0 };
+    if (i == nameAt) { s_tri(&lcd, x + 2, 17, 1, 1); s_tri(&lcd, x + 2, 34, 0, 1); }
+    s_text(&lcd, x + 1, 24, c, 1); s_fill(&lcd, x, 31, 5, 1, 1);
+  }
+  s_text(&lcd, 2, 45, "A: KEEP IT", 1); s_text(&lcd, 2, 52, "B: BACK", 1);
 }
 static void drawWifi(void) {             // SETTINGS > WIFI: what the platform says, A = set up
   s_clear(&lcd, 0);
@@ -287,7 +300,7 @@ static void drawCall(void) {
 }
 static void startDial(void) {
   if (!callRecords()) return;
-  S.mlen = msg_pack(SET.serial, "VMX", S.crec, S.cn, S.msg);
+  S.mlen = msg_pack(SYS.serial, SYS.name[0] ? SYS.name : "VMX", S.crec, S.cn, S.msg);
   check_code(S.msg, S.mlen, S.code);
   keypad("1-800-VMX-WRLD", S.digits);
   S.ct0 = clock_s(); S.dialLen = snd_dial(S.digits);
@@ -348,18 +361,31 @@ static void press(int b) {
       if (b == B_B) { backSnd(); go(SC_SAVES); }
       break;
     case SC_SETTINGS:
-      if (b == B_UP) { S.setSel = (S.setSel + 3) % 4; blip(); }
-      if (b == B_DOWN) { S.setSel = (S.setSel + 1) % 4; blip(); }
+      if (b == B_UP) { S.setSel = (S.setSel + 4) % 5; blip(); }
+      if (b == B_DOWN) { S.setSel = (S.setSel + 1) % 5; blip(); }
       if (b == B_A || b == B_LEFT || b == B_RIGHT) {
         if (S.setSel == 0) { SET.sound = !SET.sound; snd_mute(!SET.sound); okSnd(); }
         if (S.setSel == 1) { SET.bright = (uint8_t)((SET.bright + (b == B_LEFT ? 2 : 1)) % 3); blip(); }
-        if (S.setSel == 2 && b == B_A) { okSnd(); go(SC_WIFI); }
-        if (S.setSel == 3 && b == B_A) { okSnd(); go(SC_ABOUT); }
+        if (S.setSel == 2 && b == B_A) { okSnd(); memset(nameEd, 0, sizeof nameEd); snprintf(nameEd, sizeof nameEd, "%s", SYS.name);
+                                         for (int i = (int)strlen(nameEd); i < 8; i++) nameEd[i] = ' '; nameAt = 0; go(SC_NAME); }
+        if (S.setSel == 3 && b == B_A) { okSnd(); go(SC_WIFI); }
+        if (S.setSel == 4 && b == B_A) { okSnd(); go(SC_ABOUT); }
         saveSet();
       }
       if (b == B_B) { backSnd(); go(SC_MAIN); }
       break;
     case SC_ABOUT: if (b == B_B) { backSnd(); go(SC_SETTINGS); } break;
+    case SC_NAME: {                                     // up/down: the letter, left/right: which one, A: keep it
+      static const char *CH = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      int n = (int)strlen(CH), k = (int)(strchr(CH, nameEd[nameAt]) ? strchr(CH, nameEd[nameAt]) - CH : 0);
+      if (b == B_UP) { nameEd[nameAt] = CH[(k + 1) % n]; blip(); }
+      if (b == B_DOWN) { nameEd[nameAt] = CH[(k + n - 1) % n]; blip(); }
+      if (b == B_LEFT && nameAt > 0) { nameAt--; blip(); }
+      if (b == B_RIGHT && nameAt < 7) { nameAt++; blip(); }
+      if (b == B_A) { int e = 8; while (e > 0 && nameEd[e - 1] == ' ') e--; memset(SYS.name, 0, sizeof SYS.name); memcpy(SYS.name, nameEd, (size_t)e);
+                      plat_save("sys", &SYS, sizeof SYS); okSnd(); go(SC_SETTINGS); flash("SAVED"); }
+      if (b == B_B) { backSnd(); go(SC_SETTINGS); }
+    } break;
     case SC_WIFI: if (b == B_A) { okSnd(); plat_wifi_setup(); } if (b == B_B) { backSnd(); go(SC_SETTINGS); } break;
     case SC_CALL: {
       int c = callRecords();
@@ -418,15 +444,25 @@ void vmx_init(void) {
   for (int i = 0; i < VMX_NGAMES; i++) vol_name(VMX_GAMES[i]->tid, VMX_GAMES[i]->title);   // save folders' names
   for (int i = 0; i < VMX_NGAMES && i < 36; i++) { ART[i] = (Surf){ 24, 24, artBuf[i] }; VMX_GAMES[i]->art(&ART[i]); }
   plat_load("settings", &SET, sizeof SET); loadRecs();
+  if (plat_load("sys", &SYS, sizeof SYS) != (int)sizeof SYS || memcmp(SYS.magic, "VMX1", 4)) memset(&SYS, 0, sizeof SYS);
   memset(&S, 0, sizeof S); S.screen = SC_OFF;
 }
 const uint8_t *vmx_screen(void) { return S.screen == SC_PLAY && S.playing && !linked ? S.g->draw() : lcdBuf; }
 int vmx_bright(void) { return SET.bright; }
+uint32_t vmx_serial(void) { return SYS.serial; }
 int vmx_on(void) { return linked || S.screen != SC_OFF; }
 void vmx_frame(uint32_t ms, int held) {
   if (!lastMs) {                                         // power-up: pick this VMX's serial once, then boot
     lastMs = ms ? ms : 1;
-    if (!SET.serial) { SET.serial = ((ms + 1) * 2654435761u ^ (uint32_t)plat_day() * 40503u) & 0xFFFFFF; if (!SET.serial) SET.serial = 1; saveSet(); }
+    int ch = 0;
+    if (!SYS.serial) {                                   // no VMX.SYS (no serial from the chip): make one, once
+      memset(&SYS, 0, sizeof SYS); memcpy(SYS.magic, "VMX1", 4); SYS.day = 0xFFFF;
+      SYS.serial = SET.serial ? SET.serial : (ms + 1) * 2654435761u ^ (uint32_t)plat_day() * 40503u ^ 0x56000000u;   // an older VMX keeps its own
+      if (!SYS.serial) SYS.serial = 1;
+      ch = 1;
+    }
+    if (SYS.day == 0xFFFF && plat_day() > 0) { SYS.day = (uint16_t)plat_day(); ch = 1; }   // the day it was first set up
+    if (ch) plat_save("sys", &SYS, sizeof SYS);
     power();
   }
   float raw = (ms - lastMs) / 1000.0f, dt = raw < 0.05f ? raw : 0.05f; lastMs = ms; nowMs = ms; S.t += dt;
@@ -461,6 +497,7 @@ void vmx_frame(uint32_t ms, int held) {
     case SC_ERASE: drawErase(); break;
     case SC_SETTINGS: drawSettings(); break;
     case SC_ABOUT: drawAbout(); break;
+    case SC_NAME: drawName(); break;
     case SC_WIFI: drawWifi(); break;
     default: drawCall(); break;
   }

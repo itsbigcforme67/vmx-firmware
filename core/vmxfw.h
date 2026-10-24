@@ -18,6 +18,7 @@ void vmx_frame(uint32_t ms, int held);      // ms = time now; held = B_* bits
 const uint8_t *vmx_screen(void);            // 64 x 64, 1 = lit
 int  vmx_bright(void);                      // 0..2
 int  vmx_on(void);                          // 0 = powered off (screen dark)
+uint32_t vmx_serial(void);                  // this VMX's serial (core/vmxvol.h VmxSys), once it has booted
 void vmx_audio(int16_t *out, int n);        // the next n samples (mono, VMX_RATE)
 
 // provided by the platform
@@ -43,7 +44,8 @@ int  vmx_add_game(const uint8_t *vxp, size_t len);   // 0 = added, -1 = not a va
 void vmx_clear_games(void);                          // forget them all (then add again and call vmx_init)
 
 // VMX CASINO's shared chip bank (core/game_vx.c; vmx-world/docs/CASINO.md)
-typedef struct { uint32_t magic; int32_t chips, peak, staked, paid, cashed, sent; uint16_t stipendDay; uint8_t sentOk, pad; } VmxBank;
+typedef struct { uint32_t magic; int32_t chips, peak, staked, paid, cashed, sent; uint16_t stipendDay; uint8_t sentOk, pad;
+                 uint32_t serial; } VmxBank;          // serial: the VMX the stash belongs to (a copy on another VMX doesn't count)
 const VmxBank *vmx_bank(void);
 void vmx_bank_sent(int32_t chips);          // CALL sent this stash
 

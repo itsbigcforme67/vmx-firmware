@@ -60,8 +60,12 @@ static VmxBank bank; static int bankLoaded, bankDirty, bonus, demoBank = -1, boo
 static void bankLoad(void) {
   if (bankLoaded) return;
   bankLoaded = 1;
-  if (plat_load("casino", &bank, sizeof bank) != (int)sizeof bank || bank.magic != 0x42435856u) {
+  int n = plat_load("casino", &bank, sizeof bank);
+  if (n == (int)sizeof bank - 4 && bank.magic == 0x42435856u) { bank.serial = vmx_serial(); bankDirty = 1; }   // before stashes had owners
+  else if (n != (int)sizeof bank || bank.magic != 0x42435856u || bank.serial != vmx_serial()) {
+    // none yet, or copied here from another VMX (the dashboard copies saves): this VMX starts its own
     memset(&bank, 0, sizeof bank); bank.magic = 0x42435856u; bank.chips = bank.peak = 100; bank.stipendDay = 0xFFFF;
+    bank.serial = vmx_serial(); if (n > 0) bankDirty = 1;
   }
 }
 static void bankSave(void) { if (bankDirty) { plat_save("casino", &bank, sizeof bank); bankDirty = 0; } }

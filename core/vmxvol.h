@@ -17,7 +17,12 @@ extern "C" {
 #endif
 #define VOL_TITLE "56580001"
 #define VOL_CHIPS 0x56581F00u                            // the casino chips' save folder (their score record's ID)
-int  vol_open(Fatx *v);                                   // mounts it, or formats one that isn't FATX; 1 = ok
+// who a VMX is: its serial (from the chip where there is one, so a format keeps it), the owner's name (SETTINGS > NAME)
+typedef struct { char magic[4]; uint32_t serial; uint16_t day; char name[10]; } VmxSys;   // "VMX1", 20 bytes
+int  vol_open(Fatx *v, uint32_t serial);                  // mounts it (or formats one that isn't FATX); a new VMX.SYS
+                                                          // gets this serial (0: none made, the firmware makes one); 1 = ok
+int  vol_sys(Fatx *v, VmxSys *out);                       // 1 = it's a VMX (a valid VMX.SYS)
+void vol_serial_text(uint32_t serial, char out[10]);      // "1A2B-3C4D"
 int  vol_load(Fatx *v, const char *key, void *buf, int max);      // bytes, 0 = none
 int  vol_save(Fatx *v, const char *key, const void *buf, int n);  // 1 = ok; buf NULL = delete it
 // where a key lives, from the volume's root, with \ between names: "settings", "casino", "g<ID>" (a game's save),

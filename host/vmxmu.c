@@ -6,7 +6,9 @@
 //   build/vmxmu IMG get PATH [OUT]       to OUT or stdout
 //   build/vmxmu IMG put LOCAL PATH       makes the folders, replaces a file
 //   build/vmxmu IMG rm PATH              a file or a whole folder
-//   build/vmxmu IMG install GAME.VXP     as the VMX keeps games (56580001\<ID>0000\GAME.VXP + SaveMeta.xbx)
+//   build/vmxmu IMG install GAME.VXP     as the VMX keeps games (56580001\<ID>0000\GAME.VXP + SaveMeta.xbx); makes
+//                                        the volume a VMX (VMX.SYS with a new serial) if it isn't one
+//   build/vmxmu IMG id [NAME]            which VMX it is (serial, owner); NAME sets the owner's name
 //   build/vmxmu IMG test                 the self-test (on a scratch image)
 #include "../core/fatx.h"
 #include "../core/vmxvol.h"
@@ -14,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>
 
 static int rd(void *ctx, uint32_t s, int n, uint8_t *b) { FILE *f = ctx; return !fseek(f, (long)s * 512, SEEK_SET) && fread(b, 512, (size_t)n, f) == (size_t)n; }
 static int wr(void *ctx, uint32_t s, int n, const uint8_t *b) { FILE *f = ctx; return !fseek(f, (long)s * 512, SEEK_SET) && fwrite(b, 512, (size_t)n, f) == (size_t)n; }
@@ -31,6 +34,7 @@ static void tree(Fatx *v, const char *path, int depth) {
     if (e[i].dir) tree(v, p, depth + 1); else printf("  %u\n", (unsigned)e[i].size);
   }
 }
+static uint32_t new_serial(void) { uint32_t s = (uint32_t)time(NULL) * 2654435761u ^ (uint32_t)clock() * 40503u ^ 0x56000000u; return s ? s : 1; }
 static uint32_t now(void) { time_t t = time(NULL); struct tm *m = localtime(&t); return fatx_stamp(m->tm_year + 1900, m->tm_mon + 1, m->tm_mday, m->tm_hour, m->tm_min, m->tm_sec); }
 
 // ---- the self-test: a model of what should be on the volume, checked after every step and after re-mounting
@@ -66,7 +70,8 @@ static int selftest(const char *img) {
   T(fatx_remove(&v, "fill") && fatx_free_bytes(&v) == full);
   // the VMX's layout
   uint32_t ids0[8];
-  T(vol_open(&v)); T(fatx_size(&v, "56580001\\VMX.SYS") == 5);
+  VmxSys sy; T(vol_open(&v, 0) && !vol_sys(&v, &sy)); T(vol_open(&v, 0x1A2B3C4Du) && vol_sys(&v, &sy) && sy.serial == 0x1A2B3C4Du);
+  T(vol_open(&v, 0x99u) && vol_sys(&v, &sy) && sy.serial == 0x1A2B3C4Du);       // an existing VMX keeps its serial
   T(vol_save(&v, "settings", a, 8)); T(fatx_size(&v, "56580001\\SETTINGS.BIN") == 8);
   T(vol_save(&v, "casino", a, 32)); T(fatx_size(&v, "56580001\\56581F000000\\CHIPS.BIN") == 32);
   T(fatx_read(&v, "56580001\\56581F000000\\SaveMeta.xbx", b, sizeof b) == 2 + 2 * 23 && b[2] == 'N' && b[12] == 'V');   // "Name=VMX CASINO CHIPS"
@@ -97,7 +102,7 @@ int main(int argc, char **argv) {
     int ok = fatx_format(&v, (uint32_t)time(NULL)); printf(ok ? "%s: FATX, %u clusters of 16 KB\n" : "%s: format failed\n", img, (unsigned)v.nclusters - 1);
     fatx_unmount(&v); fclose(f); return !ok;
   }
-  int write = !strcmp(cmd, "put") || !strcmp(cmd, "rm") || !strcmp(cmd, "install");
+  int write = !strcmp(cmd, "put") || !strcmp(cmd, "rm") || !strcmp(cmd, "install") || (!strcmp(cmd, "id") && argc > 3);
   f = fopen(img, write ? "r+b" : "rb"); if (!f) { perror(img); return 1; }
   fseek(f, 0, SEEK_END); long size = ftell(f);
   Fatx v = { .read = rd, .write = wr, .ctx = f, .sectors = (uint32_t)(size / 512) }; v.stamp = now();
@@ -119,8 +124,14 @@ int main(int argc, char **argv) {
   else if (!strcmp(cmd, "install") && argc > 3) {
     int n; uint8_t *d = slurp(argv[3], &n); if (!d) { perror(argv[3]); return 1; }
     char title[24]; uint32_t id;
-    ok = vol_open(&v) && vol_install_vxp(&v, d, n, &id, title);
+    ok = vol_open(&v, new_serial()) && vol_install_vxp(&v, d, n, &id, title);
     if (ok) printf("%s: %08X %s\n", argv[3], (unsigned)id, title);
+  } else if (!strcmp(cmd, "id")) {
+    VmxSys sy; char t[10];
+    if (!vol_sys(&v, &sy)) { printf("not a VMX\n"); return 1; }
+    if (argc > 3) { memset(sy.name, 0, sizeof sy.name); for (int i = 0; i < 8 && argv[3][i]; i++) sy.name[i] = (char)toupper((unsigned char)argv[3][i]);
+                    ok = fatx_write(&v, VOL_TITLE "\\VMX.SYS", &sy, sizeof sy); }
+    vol_serial_text(sy.serial, t); printf("VMX %s  owner %s  set up on day %d\n", t, sy.name[0] ? sy.name : "-", sy.day == 0xFFFF ? -1 : sy.day);
   } else { fprintf(stderr, "bad command\n"); return 2; }
   fatx_unmount(&v); fclose(f);
   if (!ok) fprintf(stderr, "failed\n");

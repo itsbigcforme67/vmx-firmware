@@ -126,3 +126,16 @@ written once for every casino game. Settings are a loose `56580001\SETTINGS.BIN`
 SaveMeta.xbx name from the games' titles (vol_name, from vmx_init). World uses the same mapping on the hard disk.
 Self-test covers it; the host run, World (PC + xemu memory unit) agree. Applets: World content in
 E:\TDATA\56580001\$c\5658000156581010\ (vmx-world DESIGN.md). Not made yet: SaveImage.xbx / TitleImage.xbx icons.
+
+## 2026-10-23 later: telling VMXs apart (owner: serial number; up to 8 plugged in at once)
+- `56580001\VMX.SYS` (VmxSys, 20 bytes): "VMX1", serial, the day it was first set up, the owner's name. On the CoreS3
+  the serial comes from the chip's factory MAC (FNV hash to 32 bits), so formatting keeps it; elsewhere (PC build,
+  World's hard-disk VMX) the firmware makes one at first start (an older VMX keeps its SETTINGS serial). Shown as
+  `1A2B-3C4D` in SETTINGS > ABOUT; CALL sends it with the owner's name.
+- SETTINGS > NAME (new; SETTINGS has 5 rows now): 8 letters, up/down the letter, left/right which one, A keeps it.
+- The casino stash carries the serial (VmxBank.serial): a stash copied onto another VMX through the dashboard doesn't
+  count there (that VMX starts its own 100). Not covered: restoring an old copy onto the same VMX (needs a counter
+  the volume can't hold, e.g. in the chip's NVS).
+- `build/vmxmu IMG id [NAME]` shows or sets who a VMX is; `install` makes a plain memory unit a VMX (new serial).
+- VMX World handles up to 8 (vmx-world xbox/vmxlink.c): listed by controller and slot, X opens CHOOSE A VMX, and
+  downloads ask DOWNLOAD TO when there's more than one place.

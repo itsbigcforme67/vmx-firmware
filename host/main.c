@@ -25,7 +25,7 @@ static void mu_open(void) {
   muf = fopen(p, "r+b"); if (!muf) { muf = fopen(p, "w+b"); if (muf) { fseek(muf, FATX_MU_BYTES - 1, SEEK_SET); fputc(0, muf); } }
   if (!muf) { perror(p); exit(1); }
   mu = (Fatx){ .read = mu_rd, .write = mu_wr, .sectors = FATX_MU_BYTES / 512, .stamp = fatx_stamp(2002, 11, 15, 12, 0, 0) };
-  if (!vol_open(&mu)) { fprintf(stderr, "%s: can't open the volume\n", p); exit(1); }
+  if (!vol_open(&mu, 0)) { fprintf(stderr, "%s: can't open the volume\n", p); exit(1); }
 }
 int plat_load(const char *key, void *buf, int max) { return vol_load(&mu, key, buf, max); }
 void plat_save(const char *key, const void *buf, int n) { vol_save(&mu, key, buf, n); fflush(muf); }

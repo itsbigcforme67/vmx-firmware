@@ -81,6 +81,13 @@ static void endLink() {                               // let go of the host; res
 }
 extern "C" void plat_link_eject(void) { declined = true; endLink(); }
 
+// this VMX's serial: from the chip's factory MAC address (unique, survives a format), as 32 bits
+static uint32_t chipSerial() {
+  uint64_t m = ESP.getEfuseMac(); uint32_t h = 2166136261u;
+  for (int i = 0; i < 6; i++) { h ^= (uint8_t)(m >> (8 * i)); h *= 16777619u; }
+  return h ? h : 1;
+}
+
 // ---- moving LittleFS's games and saves over (first start of this firmware)
 static void migrate(Preferences &prefs) {
   struct Item { String path; uint8_t *d; size_t n; bool game; };
@@ -96,7 +103,7 @@ static void migrate(Preferences &prefs) {
     }
     LittleFS.end();
   }
-  if (!fatx_format(&vol, (uint32_t)esp_random()) || !vol_open(&vol)) { Serial.println("memory unit: format failed"); return; }
+  if (!fatx_format(&vol, (uint32_t)esp_random()) || !vol_open(&vol, chipSerial())) { Serial.println("memory unit: format failed"); return; }
   for (int i = 0; i < n; i++) {
     if (items[i].game) { uint32_t id; char t[24]; if (vol_install_vxp(&vol, items[i].d, (int)items[i].n, &id, t)) Serial.printf("moved game %s\n", t); }
     else { String k = items[i].path; int dot = k.lastIndexOf('.'); if (dot > 0) k = k.substring(0, dot); vol_save(&vol, k.c_str(), items[i].d, (int)items[i].n); }
@@ -117,7 +124,7 @@ bool mu_begin(Preferences &prefs) {
   vol = (Fatx){ .read = rdSec, .write = wrSec, .ctx = NULL, .sectors = part->size / 512 };
   vol.stamp = fatx_stamp(2002, 11, 15, 12, 0, 0);
   if (!fatx_mount(&vol)) migrate(prefs);
-  if (!vol_open(&vol)) { Serial.println("memory unit: can't open"); return false; }
+  if (!vol_open(&vol, chipSerial())) { Serial.println("memory unit: can't open"); return false; }
   blkFlush();
   Serial.printf("memory unit: %u KB, %u KB free\n", (unsigned)(part->size / 1024), (unsigned)(fatx_free_bytes(&vol) / 1024));
   msc.vendorID("VMX"); msc.productID("VMX MEMORY UNIT"); msc.productRevision("1.0");
