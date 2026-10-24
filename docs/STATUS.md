@@ -139,3 +139,10 @@ E:\TDATA\56580001\$c\5658000156581010\ (vmx-world DESIGN.md). Not made yet: Save
 - `build/vmxmu IMG id [NAME]` shows or sets who a VMX is; `install` makes a plain memory unit a VMX (new serial).
 - VMX World handles up to 8 (vmx-world xbox/vmxlink.c): listed by controller and slot, X opens CHOOSE A VMX, and
   downloads ask DOWNLOAD TO when there's more than one place.
+
+## 2026-10-24: on the rig
+Flashed over Wi-Fi (`pio run -e ota -t upload`): boots, all 27 games built in, the LittleFS storage moved onto the
+memory-unit volume. The first flash wrote an empty RECORD.BIN (and its save folder) for every game while splitting
+the old records: 2016 KB free. Fixed (records are only written when they hold something; empty ones and folders
+left with only their SaveMeta.xbx are removed at start) and flashed again: 2976 KB free (186 blocks). Not tried yet:
+plugging the rig's USB-C into a PC or an Xbox (MEMORY UNIT mode).
