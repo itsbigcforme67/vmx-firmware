@@ -18,7 +18,8 @@ void vmx_frame(uint32_t ms, int held);      // ms = time now; held = B_* bits
 const uint8_t *vmx_screen(void);            // 64 x 64, 1 = lit
 int  vmx_bright(void);                      // 0..2
 int  vmx_on(void);                          // 0 = powered off (screen dark)
-uint32_t vmx_serial(void);                  // this VMX's serial (core/vmxvol.h VmxSys), once it has booted
+uint32_t vmx_serial(void);
+void vmx_save_now(void);                    // write what's waiting (the playing game's record): before the VMX is left mid-game                  // this VMX's serial (core/vmxvol.h VmxSys), once it has booted
 void vmx_audio(int16_t *out, int n);        // the next n samples (mono, VMX_RATE)
 
 // provided by the platform

@@ -49,6 +49,8 @@ static void saveRec(const VmxGame *g) {   // each game's record goes in its own 
   char k[12]; snprintf(k, sizeof k, "r%08x", (unsigned)g->tid); VmxRec *r = rec(g->id);
   if (g->tid) plat_save(k, recEmpty(r) ? NULL : r, sizeof(VmxRec));
 }
+static int recDirty, recTicks;                    // the playing game's record changed since it was saved
+static void flushRec(void) { if (recDirty && S.g) saveRec(S.g); recDirty = 0; recTicks = 0; }
 static void loadRecs(void) {
   memset(RECS, 0, sizeof RECS);
   if (plat_load("recs", RECS, sizeof RECS) > 0) {        // an older VMX kept them all in one "recs": split it up
@@ -320,19 +322,22 @@ static void open_game(int k, int demo, int attract) {
   S.prevHeld = curHeld;                                  // a button still down from the menu isn't a press in the game
   S.g->start(nowMs % 100000, demo); S.playing = 1; go(SC_PLAY);
 }
-static void close_game(void) { S.playing = 0; go(SC_GAMES); }
+static void close_game(void) { flushRec(); S.playing = 0; go(SC_GAMES); }
 static void tickGame(int held) {
   VmxIn in = { held | S.latch, 0 }; S.latch = 0;
   in.edges = in.held & ~S.prevHeld; S.prevHeld = in.held;
   if (S.demo) { if (in.edges & 63) { backSnd(); close_game(); return; } }
   else if ((in.edges & B_B) && !S.g->usesB) { backSnd(); close_game(); return; }
   S.g->tick(&in, S.demo);
-  if (!S.demo) { VmxRec *r = rec(S.g->id); if (S.g->record(r)) { r->day = (uint16_t)day_now(); saveRec(S.g); } }
+  // the record follows the game every tick, but goes to storage only now and then: a new best can come every tick
+  // (BLOBS's soft drop scores each row), and a save is a flash erase, or a USB write to the VMX from World
+  if (!S.demo) { VmxRec *r = rec(S.g->id); if (S.g->record(r)) { r->day = (uint16_t)day_now(); recDirty = 1; } }
+  if (recDirty && ++recTicks >= 300) flushRec();       // every 10 s at most while playing
   if (S.attract && (S.since += 1 / 30.0f) > 25) { int n = (S.k + 1) % VMX_NGAMES; S.game = n; open_game(n, 1, 1); }
 }
 
 // ---------------------------------------------------------------- input
-static void power(void) { snd_mute(!SET.sound); S.playing = 0; snd_hangup(); go(SC_BOOT); S.boot = 0; jingle(); }
+static void power(void) { flushRec(); snd_mute(!SET.sound); S.playing = 0; snd_hangup(); go(SC_BOOT); S.boot = 0; jingle(); }
 static void press(int b) {
   S.idle = 0;
   int sc = S.screen;
@@ -429,7 +434,7 @@ static void drawLink(void) {
   else s_centre(&lcd, 56, "B: EJECT", 1);
 }
 void vmx_link(int on) {
-  if (on && !linked) { if (S.screen == SC_PLAY) close_game(); snd_hangup(); }
+  if (on && !linked) { if (S.screen == SC_PLAY) close_game(); flushRec(); snd_hangup(); }
   linked = on;
   if (!on && S.screen != SC_OFF) go(SC_MAIN);
 }
@@ -455,6 +460,7 @@ void vmx_init(void) {
 const uint8_t *vmx_screen(void) { return S.screen == SC_PLAY && S.playing && !linked ? S.g->draw() : lcdBuf; }
 int vmx_bright(void) { return SET.bright; }
 uint32_t vmx_serial(void) { return SYS.serial; }
+void vmx_save_now(void) { flushRec(); }
 int vmx_on(void) { return linked || S.screen != SC_OFF; }
 void vmx_frame(uint32_t ms, int held) {
   if (!lastMs) {                                         // power-up: pick this VMX's serial once, then boot

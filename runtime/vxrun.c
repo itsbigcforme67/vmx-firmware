@@ -52,6 +52,7 @@ int main(int argc, char **argv) {
   for (int t = 1; t <= ticks; t++) {
     // the press pattern: a new random button set every few ticks (same generator as tools/parity/js_run.mjs)
     ps = ps * 1103515245u + 12345u; int nh = (ps >> 16) % 8 == 0 ? (int)((ps >> 20) & 63) : held;
+    if (getenv("HOLD")) nh = atoi(getenv("HOLD"));       // HOLD=mask: those buttons held all the time (B_DOWN = 2)
     int pressed = nh & ~held; held = nh;
     vx_stats(vm, &before, NULL, NULL);
     if (vx_tick(vm, held, pressed) || vx_draw(vm)) { fprintf(stderr, "tick %d: %s\n", t, vx_error(vm)); return 1; }
