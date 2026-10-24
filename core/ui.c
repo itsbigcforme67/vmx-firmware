@@ -44,18 +44,23 @@ static VmxRec *rec(const char *id) {
   for (int i = 0; i < NREC; i++) if (!RECS[i].id[0]) { snprintf(RECS[i].id, sizeof RECS[i].id, "%s", id); return &RECS[i].r; }
   return &RECS[NREC - 1].r;
 }
-static void saveRec(const VmxGame *g) {   // each game's record goes in its own save folder ("r<ID>": vmxvol.h)
-  char k[12]; snprintf(k, sizeof k, "r%08x", (unsigned)g->tid); if (g->tid) plat_save(k, rec(g->id), sizeof(VmxRec));
+static int recEmpty(const VmxRec *r) { static const VmxRec z; return !memcmp(r, &z, sizeof z); }
+static void saveRec(const VmxGame *g) {   // each game's record goes in its own save folder ("r<ID>": vmxvol.h); none if empty
+  char k[12]; snprintf(k, sizeof k, "r%08x", (unsigned)g->tid); VmxRec *r = rec(g->id);
+  if (g->tid) plat_save(k, recEmpty(r) ? NULL : r, sizeof(VmxRec));
 }
 static void loadRecs(void) {
   memset(RECS, 0, sizeof RECS);
   if (plat_load("recs", RECS, sizeof RECS) > 0) {        // an older VMX kept them all in one "recs": split it up
-    for (int i = 0; i < VMX_NGAMES; i++) saveRec(VMX_GAMES[i]);
+    for (int i = 0; i < VMX_NGAMES; i++) if (!recEmpty(rec(VMX_GAMES[i]->id))) saveRec(VMX_GAMES[i]);
     plat_save("recs", NULL, 0); return;
   }
   for (int i = 0; i < VMX_NGAMES; i++) {
     char k[12]; VmxRec r; snprintf(k, sizeof k, "r%08x", (unsigned)VMX_GAMES[i]->tid);
-    if (VMX_GAMES[i]->tid && plat_load(k, &r, sizeof r) == (int)sizeof r) *rec(VMX_GAMES[i]->id) = r;
+    if (VMX_GAMES[i]->tid && plat_load(k, &r, sizeof r) == (int)sizeof r) {
+      if (recEmpty(&r)) plat_save(k, NULL, 0);            // (an empty one written by an earlier firmware: not kept)
+      else *rec(VMX_GAMES[i]->id) = r;
+    }
   }
 }
 static void saveSet(void) { plat_save("settings", &SET, sizeof SET); }

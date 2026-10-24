@@ -80,6 +80,9 @@ static int selftest(const char *img) {
   T(vol_save(&v, "r56581003", a, 40)); T(fatx_size(&v, "56580001\\565810030000\\RECORD.BIN") == 40);
   T(fatx_read(&v, "56580001\\565810030000\\SaveMeta.xbx", b, sizeof b) == 2 + 2 * 16 && b[12] == 'I');            // "Name=INTERCEPT"
   T(vol_save(&v, "r56581003", NULL, 0) && vol_load(&v, "r56581003", b, sizeof b) == 0);
+  T(fatx_size(&v, "56580001\\565810030000") == -2);                    // its save is still there
+  T(vol_save(&v, "g56581003", NULL, 0) && fatx_size(&v, "56580001\\565810030000") == -1);   // nothing left: the folder goes
+  T(vol_save(&v, "g56581003", a, 999));
   T(vol_games(&v, ids0, 8) == 0);                                        // saves without GAME.VXP aren't installed games
   T(vol_install(&v, 0x56581001u, "BLOX", a, 70000)); T(vol_install(&v, 0x56581002u, "BLOBS", a, 9));
   uint32_t ids[8]; T(vol_games(&v, ids, 8) == 2);

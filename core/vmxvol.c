@@ -52,7 +52,15 @@ void vol_key_path(const char *key, char out[64], uint32_t *folder) {
 int vol_load(Fatx *v, const char *key, void *buf, int max) { char p[64]; uint32_t f; vol_key_path(key, p, &f); int n = fatx_read(v, p, buf, max); return n > 0 ? n : 0; }
 int vol_save(Fatx *v, const char *key, const void *buf, int n) {
   char p[64], m[260]; uint32_t f; vol_key_path(key, p, &f);
-  if (!buf) return fatx_size(v, p) < 0 || fatx_remove(v, p);
+  if (!buf) {                                             // delete; a save folder left with only its name goes too
+    if (fatx_size(v, p) >= 0 && !fatx_remove(v, p)) return 0;
+    if (f) {
+      char d[32]; FatxEnt e[4]; snprintf(d, sizeof d, VOL_TITLE "\\%08X0000", (unsigned)f);
+      int k = fatx_list(v, d, e, 4);
+      if (k == 0 || (k == 1 && !strcmp(e[0].name, "SaveMeta.xbx"))) fatx_remove(v, d);
+    }
+    return 1;
+  }
   if (f) {                                                // a save folder: named for the dashboard
     char meta[48]; snprintf(meta, sizeof meta, VOL_TITLE "\\%08X0000\\SaveMeta.xbx", (unsigned)f);
     if (fatx_size(v, meta) < 0) { int k = vol_meta(m, sizeof m, "Name", vol_title(f)); if (!fatx_write(v, meta, m, k)) return 0; }
