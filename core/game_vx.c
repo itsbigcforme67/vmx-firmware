@@ -12,7 +12,7 @@
 #define HEAP (128 * 1024)
 typedef struct {
   VmxGame g; uint32_t id; const uint8_t *code; size_t codeLen; uint8_t card[72];
-  char title[16], l1[8], l2[8]; int best, f[3], changed, casino;
+  char title[16], l1[8], l2[8]; int best, f[3], changed, casino, last[2];
   struct { char name[24]; const uint8_t *d; uint32_t n; } files[4]; int nfiles;
 } VxGame;
 static VxGame G[MAXVX]; static int nG;
@@ -33,7 +33,11 @@ static uint32_t crc32(const uint8_t *p, size_t n) {
 static void h_tone(int hz, int ms, int vol) { if (vol < 0) vol = 0; if (vol > 100) vol = 100; snd_tone((float)hz, 0, ms / 1000.0f, 0.07f * vol / 100.0f, 0); }
 static void h_report(int s, int a, int b, int c) {
   if (!cur) return;
-  if (s > cur->best) { cur->best = s; cur->f[0] = a; cur->f[1] = b; cur->f[2] = c; cur->changed = 1; }
+  if (cur->g.wld == 2) {             // one game a report, its fields this match's (won, lost) from 0 each match: one more
+    int lost = (a == cur->last[0] && b == cur->last[1] + 1) || (a == 0 && b == 1);   // lost, or a new match's 0-1, is a loss
+    cur->f[lost]++; cur->last[0] = a; cur->last[1] = b; cur->changed = 1;         // (as the simulator's "pool" record)
+  } else if (cur->g.wld) { cur->f[0] = a; cur->f[1] = b; cur->f[2] = c; cur->changed = 1; }   // lifetime won/lost/drawn
+  else if (s > cur->best) { cur->best = s; cur->f[0] = a; cur->f[1] = b; cur->f[2] = c; cur->changed = 1; }
 }
 static int h_load(int id, uint8_t *buf, int max) {
   char key[16]; uint32_t who = id == 0 && cur ? cur->id : (uint32_t)id;
@@ -124,7 +128,7 @@ static void art_(VxGame *g, void *p) {
   for (int y = 0; y < 24; y++) for (int x = 0; x < 24; x++) s_px(s, x, y, (g->card[y * 3 + x / 8] >> (7 - x % 8)) & 1);
 }
 static void start_(VxGame *g, uint32_t seed, int demo) {
-  cur = g; err[0] = 0; statInstr0 = 0; dataName[0] = 0;
+  cur = g; err[0] = 0; statInstr0 = 0; dataName[0] = 0; g->last[0] = g->last[1] = 0;
   bankStart(g, demo);
   if (!mem || !heapMem) { snprintf(err, sizeof err, "NO MEMORY"); g->g.usesB = 0; return; }
   const uint8_t *code = g->code;
@@ -150,6 +154,7 @@ static const uint8_t *draw_(VxGame *g) {
 static int record_(VxGame *g, VmxRec *r) {
   if (!g->changed) return 0;
   g->changed = 0;
+  if (g->g.wld == 2) { r->w += g->f[0]; r->l += g->f[1]; g->f[0] = g->f[1] = 0; return 1; }
   if (g->g.wld) { r->w = g->f[0]; r->l = g->f[1]; r->d = g->f[2]; return 1; }
   if (g->best > r->best) { r->best = g->best; return 1; }
   return 0;
@@ -177,7 +182,9 @@ int vmx_add_game(const uint8_t *d, size_t len) {
   if (total > len || crc32(d + 32, total - 32) != rd32(d + 16)) return -1;
   VxGame *g = &G[nG]; memset(g, 0, sizeof *g);
   g->id = rd32(d + 4);
-  g->casino = (d[10] | d[11] << 8) & 8;                  // header flags bit 3: a VMX CASINO game
+  int fl = d[10] | d[11] << 8;
+  g->casino = fl & 8;                                      // header flags bit 3: a VMX CASINO game
+  int wld = fl & 0x20 ? fl & 0x40 ? 2 : 1 : 0;             // bit 5: won/lost/drawn (bit 6: won/lost, one match's tally)
   for (uint32_t o = 32; o + 8 <= total; ) {
     const uint8_t *tag = d + o; uint32_t n = rd32(d + o + 4); const uint8_t *p = d + o + 8;
     if (o + 8 + n > total) return -1;
@@ -204,7 +211,7 @@ int vmx_add_game(const uint8_t *d, size_t len) {
   if (at != nG) G[at] = G[nG];
   g = &G[at];
   static char ids[MAXVX][12]; snprintf(ids[at], sizeof ids[at], "x%08x", (unsigned)g->id);
-  g->g = (VmxGame){ ids[at], g->title, { g->l1, g->l2[0] ? g->l2 : NULL }, g->id, 1, 0,
+  g->g = (VmxGame){ ids[at], g->title, { g->l1, g->l2[0] ? g->l2 : NULL }, g->id, 1, wld,
                     FNS[at].art, FNS[at].start, FNS[at].tick, FNS[at].draw, FNS[at].record };
   if (at == nG) nG++;
   return 0;

@@ -1,6 +1,7 @@
 """GAME.VXP: one file per VMX game (vmx-world/docs/DESIGN.md "The package"). Little-endian.
    header 32 bytes: "VXP1", u32 game ID, u16 version, u16 flags, u32 total length, u32 CRC-32 of what follows the header,
-   char[12] short name (flags bit 3: a VMX CASINO game, Microsoft.Vmx.Chips works); then chunks: tag[4], u32 length, data padded to 4.
+   char[12] short name (flags bit 3: a VMX CASINO game, Microsoft.Vmx.Chips works; bit 5: a won/lost/drawn game, its
+   Scores.Report fields are its lifetime counts; bit 6: as well, a won/lost game whose fields are one match's tally); then chunks: tag[4], u32 length, data padded to 4.
    NAME: lines "title", "publisher", "card line 1|card line 2", "blurb".  CARD: 24 x 24 1-bit, rows top first, MSB left.
    CODE: the runtime image (.vxi from sdk/vxlink).  FILE (any number): u8 name length, name, data (Microsoft.Vmx.Package).
 Usage:
@@ -23,7 +24,7 @@ def pack(a):
     for tag, data in chunks:
         body += tag + struct.pack("<I", len(data)) + data + b"\0" * (-len(data) % 4)
     short = a.title.upper().encode()[:12].ljust(12, b"\0")
-    head = b"VXP1" + struct.pack("<IHHII", int(a.id, 0), a.version, 8 if a.casino else 0, 32 + len(body), zlib.crc32(body)) + short
+    head = b"VXP1" + struct.pack("<IHHII", int(a.id, 0), a.version, (8 if a.casino else 0) | (0x20 if a.wld else 0) | (0x40 if a.wld == 2 else 0), 32 + len(body), zlib.crc32(body)) + short
     open(a.out, "wb").write(head + body)
     print(f"{a.out}: {32 + len(body)} bytes ({(32 + len(body) + 16383) // 16384} block)")
 
@@ -31,7 +32,7 @@ def listing(path):
     d = open(path, "rb").read()
     assert d[:4] == b"VXP1", "not a VXP"
     gid, ver, flags, total, crc = struct.unpack("<IHHII", d[4:20])
-    print(f"{path}: id {gid:08X} v{ver}{' casino' if flags & 8 else ''} {total} bytes, CRC {'ok' if zlib.crc32(d[32:total]) == crc else 'BAD'}, name {d[20:32].rstrip(b'\0').decode()}")
+    print(f"{path}: id {gid:08X} v{ver}{' casino' if flags & 8 else ''}{' wld' if flags & 0x20 else ''}{' tally' if flags & 0x40 else ''} {total} bytes, CRC {'ok' if zlib.crc32(d[32:total]) == crc else 'BAD'}, name {d[20:32].rstrip(b'\0').decode()}")
     o = 32
     while o < total:
         tag, n = d[o:o + 4].decode(), struct.unpack("<I", d[o + 4:o + 8])[0]
@@ -42,6 +43,7 @@ p = argparse.ArgumentParser(); sp = p.add_subparsers(dest="cmd", required=True)
 k = sp.add_parser("pack"); k.add_argument("out")
 for opt in ("--id", "--title", "--card", "--code"): k.add_argument(opt, required=True)
 k.add_argument("--lines"); k.add_argument("--file", action="append", help="NAME=PATH, a data file the game reads with Package"); k.add_argument("--publisher", default="Homebrew"); k.add_argument("--blurb"); k.add_argument("--version", type=int, default=1); k.add_argument("--casino", action="store_true", help="flags bit 3: a VMX CASINO game (shares the chip bank)")
+k.add_argument("--wld", type=int, default=0, help="1: flags bit 5, the record is the won/lost/drawn the game reports; 2: bits 5+6, won/lost, one game per report")
 l = sp.add_parser("list"); l.add_argument("file")
 a = p.parse_args()
 pack(a) if a.cmd == "pack" else listing(a.file)

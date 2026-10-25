@@ -68,6 +68,15 @@ game: `tools/push_game.sh build/games/JUNCTION.VXP`. Worst tick ~180k IL (Auto B
 vmx.local was off the network. To put it on: `tools/push_game.sh build/games/9-BALL.VXP`, or reflash
 `cd esp32 && pio run -e ota -t upload`.
 
+## 2026-10-24: won/lost records for managed games
+game.ini `wld=1` (GAME.VXP flags bit 5): every `Scores.Report` is the game's lifetime won/lost/drawn, taken into the
+SAVES record as is (CHECKERS, REVERSI). `wld=2` (bits 5 + 6): a won/lost game that reports one match's tally
+`(you, you, CPU)` from 0 each match, once per game; each report is one game, lost when the second field went up by
+one or it is a new match's 0-1, else won, added to the lifetime WON/LOST (9-BALL; the simulator's games.js "pool"
+record does the same). SAVES shows WON/LOST/DRAWN (wld=2: WON/LOST). `readVxp` (runtime/wasm/vxrt.js) gives `wld`.
+Checked on `build/vmxhost` with a throwaway test game (five reports -> WON 3 LOST 2, again -> 6/4; wld=1 takes the
+last report) and CHECKERS/9-BALL's SAVES pages; parity (checkers, reversi, pool) and wasm_check unchanged.
+
 ## 2026-10-22: VMX CASINO chip bank
 `Microsoft.Vmx.Chips` (Balance / Bet / Pay / Bonus) for games with GAME.VXP flags bit 3 (`casino=1` in game.ini).
 The firmware keeps the bank in save `casino` (core/game_vx.c: 100 to start, daily top-up to 25, demo = scratch 100);

@@ -192,7 +192,8 @@ static void drawGames(void) {
   char b[24]; snprintf(b, sizeof b, "%d/%d", S.game + 1, n); s_text(&lcd, 64 - tw(b), 58, b, 1);
 }
 static void scoreLines(const VmxGame *g, const VmxRec *r, char out[3][16], int *n) {
-  if (g->wld) { snprintf(out[0], 16, "WON %d", (int)r->w); snprintf(out[1], 16, "LOST %d", (int)r->l); snprintf(out[2], 16, "DRAWN %d", (int)r->d); *n = 3; }
+  if (g->wld == 2) { snprintf(out[0], 16, "WON %d", (int)r->w); snprintf(out[1], 16, "LOST %d", (int)r->l); *n = 2; }
+  else if (g->wld) { snprintf(out[0], 16, "WON %d", (int)r->w); snprintf(out[1], 16, "LOST %d", (int)r->l); snprintf(out[2], 16, "DRAWN %d", (int)r->d); *n = 3; }
   else { snprintf(out[0], 16, "BEST"); snprintf(out[1], 16, "%d", (int)r->best); *n = 2; }
 }
 static void drawSaves(void) {

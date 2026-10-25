@@ -2,7 +2,7 @@
 // The VMX simulator (POCKET ARCADE vmx/) has a copy, made by its tools/vmx-sync.sh; tools/parity/wasm_run.mjs
 // checks it against the PC build.
 //   const rt = await vxRuntime(fetch("vxrt.wasm"))     the compiled runtime (one for every game)
-//   const info = readVxp(bytes)                        { id, casino, title, publisher, lines, blurb, card } or null
+//   const info = readVxp(bytes)                        { id, casino, wld, title, publisher, lines, blurb, card } or null
 //   const vm = vxGame(rt, bytes, host)                 host: tone(hz, ms, vol) report(score, f1, f2, f3)
 //                                                      load(id) -> Uint8Array | null   save(bytes)   chips(op, n)
 //                                                      data(name) -> Uint8Array | null (a file the Xbox put in the
@@ -31,7 +31,8 @@ export function readVxp(d) {
   if (d.length < 32 || String.fromCharCode(...d.subarray(0, 4)) !== "VXP1") return null;
   const total = rd32(d, 12);
   if (total > d.length || crc32(d.subarray(32, total)) !== rd32(d, 16)) return null;
-  const g = { id: rd32(d, 4), casino: !!((d[10] | d[11] << 8) & 8), title: "", publisher: "", lines: [], blurb: "", card: null, code: false };
+  const fl = d[10] | d[11] << 8;                                   // flags bit 3: casino; 5: won/lost/drawn (6: won/lost tally)
+  const g = { id: rd32(d, 4), casino: !!(fl & 8), wld: fl & 0x20 ? fl & 0x40 ? 2 : 1 : 0, title: "", publisher: "", lines: [], blurb: "", card: null, code: false };
   for (let o = 32; o + 8 <= total; ) {
     const tag = String.fromCharCode(...d.subarray(o, o + 4)), n = rd32(d, o + 4), p = d.subarray(o + 8, o + 8 + n);
     if (o + 8 + n > total) return null;

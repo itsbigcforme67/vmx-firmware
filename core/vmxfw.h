@@ -56,7 +56,7 @@ typedef struct { int32_t best, w, l, d; uint16_t day; uint8_t sentOk; int32_t se
 typedef struct VmxGame {
   const char *id, *title, *name[2];
   uint32_t tid;                             // game ID for the score records (vmx-world/docs/DESIGN.md)
-  int usesB, wld;                           // usesB 0: B goes back; wld: score = won/lost/drawn
+  int usesB, wld;                           // usesB 0: B goes back; wld: score = won/lost/drawn (2: won/lost)
   void (*art)(void *surf);                  // 24 x 24 card picture (a Surf *)
   void (*start)(uint32_t seed, int demo);
   void (*tick)(const VmxIn *in, int demo);  // 30 times a second
