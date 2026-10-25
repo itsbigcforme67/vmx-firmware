@@ -166,7 +166,14 @@ static void card(int x, int y, int s, int k, int sel) {
   s_fill(&lcd, x, y, s, s, 0); s_rrect(&lcd, x, y, s, s, 1); if (sel) s_rrect(&lcd, x - 1, y - 1, s + 2, s + 2, 1);
   s_blit(&lcd, &ART[k], x + 2, y + 2, s - 4, s - 4, 0);
 }
+static void drawNone(const char *title) {   // GAMES / SAVES on a VMX with nothing installed
+  s_clear(&lcd, 0);
+  s_pill(&lcd, 2, 1, 60, 9, PILL_FILL, 1); s_centre(&lcd, 3, title, 0);
+  s_centre(&lcd, 18, "NO GAMES YET", 1); s_centre(&lcd, 30, "GET THEM IN", 1); s_centre(&lcd, 38, "VMX WORLD", 1);
+  s_centre(&lcd, 56, "B: BACK", 1);
+}
 static void drawGames(void) {
+  if (!VMX_NGAMES) { drawNone("GAMES"); return; }
   s_clear(&lcd, 0);
   int n = VMX_NGAMES; float pos = S.gamePos;
   struct { float off; int idx, s, x, y; } L[5];
@@ -189,6 +196,7 @@ static void scoreLines(const VmxGame *g, const VmxRec *r, char out[3][16], int *
   else { snprintf(out[0], 16, "BEST"); snprintf(out[1], 16, "%d", (int)r->best); *n = 2; }
 }
 static void drawSaves(void) {
+  if (!VMX_NGAMES) { drawNone("SAVES"); return; }
   s_clear(&lcd, 0);
   const VmxGame *g = VMX_GAMES[S.save];
   s_blit(&lcd, &ART[S.save], 4, 4, 24, 24, 1); s_ring(&lcd, 16, 16, 15, 1);
@@ -346,6 +354,7 @@ static void press(int b) {
   if (sc == SC_PLAY) { if (b == B_SIDE) { backSnd(); close_game(); } return; }
   if (b == B_SIDE) b = B_B;
   int n = VMX_NGAMES;
+  if (!n && (sc == SC_GAMES || sc == SC_SAVES)) { if (b == B_B) { backSnd(); go(SC_MAIN); } return; }   // nothing installed
   switch (sc) {
     case SC_MAIN:
       if (b == B_UP) { S.main = (S.main + 3) % 4; blip(); }
@@ -491,13 +500,13 @@ void vmx_frame(uint32_t ms, int held) {
     else press(b);
   }
   S.mainPos = chase(S.mainPos, (float)S.main, 4, dt);
-  S.gamePos = chase(S.gamePos, (float)S.game, VMX_NGAMES, dt);
+  if (VMX_NGAMES) S.gamePos = chase(S.gamePos, (float)S.game, VMX_NGAMES, dt);
   if (S.screen == SC_PLAY && S.playing) {
     S.acc += raw < 0.25f ? raw : 0.25f;
     while (S.playing && S.screen == SC_PLAY && S.acc >= 1 / 30.0f) { S.acc -= 1 / 30.0f; tickGame(held & 63); }
     return;
   }
-  if (S.screen == SC_MAIN || S.screen == SC_GAMES) { S.idle += dt; if (S.idle > 30) { S.idle = 0; open_game(S.game, 1, 1); return; } }
+  if ((S.screen == SC_MAIN || S.screen == SC_GAMES) && VMX_NGAMES) { S.idle += dt; if (S.idle > 30) { S.idle = 0; open_game(S.game, 1, 1); return; } }
   if (S.screen == SC_CALLSEND && clock_s() - S.ct0 > S.sendLen) go(SC_CALLCODE);
   switch (S.screen) {
     case SC_OFF: s_clear(&lcd, 0); break;

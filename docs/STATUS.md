@@ -146,3 +146,91 @@ memory-unit volume. The first flash wrote an empty RECORD.BIN (and its save fold
 the old records: 2016 KB free. Fixed (records are only written when they hold something; empty ones and folders
 left with only their SaveMeta.xbx are removed at start) and flashed again: 2976 KB free (186 blocks). Not tried yet:
 plugging the rig's USB-C into a PC or an Xbox (MEMORY UNIT mode).
+
+## 2026-10-24: FOLD ROOMS in C# (the last built-in C game)
+`games/fold/`: FoldLevel.cs (fold_parse, with glibc's sscanf / atoi / strtol rules), FoldGame.cs (microgames/fold
+core/fold.c: surface, moves, signals + logic, journal undo, what a tile says), FoldRooms.cs (core/game_fold.c + the
+64x64 picture from app/vmx.c). `tools/build_game.sh fold` -> build/games/FOLDROOM.VXP (CODE + FILE "levels", no NATV).
+Levels: `games/fold/levels.bin` (u16 count, offsets, the .fold texts), made by `python3 games/fold/levels.py` from
+microgames/fold/levels; run it again after a level changes. Same save as before (g56581010, 4 bytes: levels cleared).
+- Parity (`tools/parity/check.sh fold`, in `make test`): the C game is the reference (`tools/parity/fold_ref.c`, a frozen
+  copy of core/game_fold.c that reads the same levels.bin, so it outlives the firmware's copy; checked identical to
+  core/game_fold.c on every run below). `build/fold_run` runs it, or the C# image with `--vxi` (CLEARED=n: a save with n
+  levels cleared; PRESSES=file: scripted buttons). Same every tick: 3 seeds x demo/random presses for 30000 ticks (the
+  seed is also the press pattern, since FOLD ignores its seed), random presses on every level from a save, the demo
+  through all 15 levels several times (40000 ticks), and scripted undo runs (45) with both journals cut to 4 entries.
+- Speed: ~15k IL a tick on average (idle 12k; ~19k on the bigger levels), a move ~20-40k, worst ~650k when the
+  24-square level loads or restarts (~0.1-0.2 s on the device, once). Heap: ~35 KB still free at that load.
+- Needed special handling: the change journal is 4096 entries here (the C's 65536 = 256 KB won't fit the heap); a step
+  logs nothing, a push 2, a room move up to ~35, so only very long undo chains differ (same drop-the-oldest rule as the
+  C, checked with both cut to 4). Text in rooms/talk boxes is drawn with the FOLD renderer's font rule (unknown
+  character = blank; Screen.Text would draw '?'). The cells are sized for the level (C: room for 64 squares); boxes off
+  target are counted as they change and the signal loops skip levels with no buttons / driven tiles (same results).
+  The screen is drawn straight onto Screen (talk boxes over the last frame, as the C does into its buffer).
+- Limits: a level needs about 1 KB of heap a square plus its text: the 64-square levels the FOLD builder allows won't
+  fit (an estimate, untested: up to ~50 should). Not done: room transitions (the Xbox playtest's slide / corner turn) and Xbox-made levels on
+  the VMX; both are follow-ups.
+
+## 2026-10-24: levels made in FOLD BUILDER play on the VMX
+Owner's goal: any level built in the FOLD builder on the Xbox plays on the VMX (and in the simulator). How they get
+there: VMX World packs the builder's saved levels (`user-*.fold` in its levels folder, name order) into FOLD ROOMS'
+save folder, `56580001\565810100000\DATA\LEVELS.BIN` (games/fold/levels.py's layout), on the selected VMX or World's
+own; it does this each time it looks at a VMX's games and writes only when they changed (vmx-world/xbox/hdd.c).
+- `DATA\` is new: read-only files the Xbox gives a game (vmxvol key `d<ID>:<NAME>`). Games read them with
+  `Storage.DataLength(name)` / `Storage.ReadData(name, offset, dst, index, count)` (sdk/vmx/vmx.cs), as Package. The
+  runtime's VxHost has a last field `data` (NULL = no such files); game_vx.c reads the file whole on first use (64 KB
+  at most, one buffer made once) and forgets it at the next start.
+- FOLD ROOMS: with made levels it opens on a list, ROOMS NN (the built-in ones, from the next to clear) then MADE 01..
+  (a dot = cleared; no names or anything else that could hint at a shape). Clearing one: A goes to the next made one,
+  then the list; holding B 2 s (past the 0.7 s restart) goes back to the list. The save keeps the C's 4 bytes and adds
+  a u32 FNV-1a hash of each made level cleared (so re-sent or reordered levels keep their dots). Without LEVELS.BIN
+  the game is the C's exactly (parity untouched).
+- Heap (measured with `HEAP=bytes build/vxrun ... --data LEVELS.BIN=... --save ...`, load + restart + back to the
+  list): ~62 KB + ~1.1 KB a square + 2 bytes a byte of text. A plain 56-square level fits, 58 doesn't survive a
+  restart, 64 doesn't load; text-heavy (31 signs + a 4000-step solution) runs out at 48. The rule is
+  `1100 * squares + 2 * bytes <= 64000` (FoldRooms.FitsVmx = microgames/fold/core/vmxfit.h): the builder says
+  "SAVED. TOO BIG FOR THE VMX" when a save fails it, World leaves such levels off ("FOLD: 1 LEVEL SENT, 1 TOO BIG FOR
+  THE VMX") and FOLD ROOMS shows TOO BIG FOR THE VMX instead of running out of memory.
+- Checked: builder (headless) saves 03-cube as user-001 and a 64-square level as user-002 -> World (PC build, a VMX
+  image as build/vmx.mu) writes LEVELS.BIN with the one that fits -> `build/vmxhost` on that image: the list, MADE 01
+  played through its solution to CLEARED!, its dot after. Hard-disk VMX writes the same file. `check.sh fold` (in
+  make test) now also walks the list (PRESSES: both made levels, B back, the too-big one, ROOMS) and runs random
+  presses with made levels, no game error allowed. vxrun gained `--data`, `--save`, `HEAP=` and `PRESSES=`.
+- Not done: the VMX simulator (web) has no `data` hook yet, so it plays only the built-in levels; the World and
+  builder XBEs build with these changes (nxdk) but weren't run in xemu or on the Xbox for this.
+
+## 2026-10-24: FOLD ROOMS turns into the next room (the builder's transitions)
+Owner: the VMX's FOLD ROOMS should have the Xbox builder's room transitions. Walking through a doorway now turns the
+view over to the next room as the FOLD BUILDER playtest does (microgames/fold/app/app.c `room_anim_draw`): a flat join
+slides, an outside corner tips away like a cube, an inside corner folds up towards you. 12 ticks, smoothstep, the eye
+2.6 rooms away (the playtest's numbers); not on teleporters, undo or restart; moves aren't held up by it (as the
+playtest). Only the edge you just crossed shows; pop-ups unchanged ("A ROOM FLIPPED", drawn over the turn).
+Screenshots: `docs/fold_turns.png` (top: `build/vmxhost` in the demo, crossing up and back; below: flat left / up,
+outside corner, inside corner left / up, from the C# image).
+- How (FoldRooms.cs DoMove / Cells / Face): 64x64 1-bit, all integer. The two rooms are kept as 7x7 cell masks (one
+  `CellCode` now decides each cell's sprites for both DrawRoom and the masks). The turn is about the screen axis
+  across the move, so each screen line across it shows one picture line scaled: one long division a line, then runs of
+  lit pixels a cell at a time (`Fill`). Sides turned away are dithered (Bayer, like the simulator's JS turn); the
+  outline and crease are drawn; the HUD stays.
+- Parity: the C reference has the same transition (`tools/parity/fold_ref.c` do_move / anim_*), built from the real
+  `vmx_room` pixels every frame, so `check.sh fold` checks the turn picture, the C#'s cell masks and its redraw
+  bookkeeping every tick. All checks same: 3 seeds x demo/random for 30000 ticks, the demo through all 15 levels
+  (40000), random presses on every level (20000 on 4, 10, 15; 7-184 turns each); `make test` passes.
+- Cost: ~45-65k IL a tick while a turn runs (~15k idle); the tick you cross ~70-115k, of which the move itself is
+  40-100k on the big levels (it was already). Room for more: skipping empty cells per line (~10k).
+- Web simulator: its old JS FOLD ROOMS (`microgames/ui/games/foldrooms_core.js` roomTurn) already had a VMX-sized
+  turn (same 3 kinds, 12 ticks, dithered and outlined); this one follows the Xbox playtest's geometry instead (its
+  eye is 2 rooms away, quadratic ease). The simulator gets this version when it runs the C# game (a sibling session is
+  on that).
+- Not done: on the rig (vmx.local offline here); `cd esp32 && pio run -e ota -t upload` or
+  `tools/push_game.sh build/games/FOLDROOM.VXP` puts it on.
+
+## 2026-10-24: no games in the firmware (owner)
+"It shouldn't come with any games as part of a default firmware." A VMX's games are exactly the GAME.VXPs installed
+on its memory unit, the same list VMX World shows: the CoreS3's 27 embedded games are gone (tools/embed_vxp.py,
+esp32/src/games_builtin.h), and FOLD ROOMS's C version (core/game_fold.c, fold_levels.h, tools/embed_levels.py) is
+replaced by the C# port (games/fold, its own section above; tools/parity/fold_ref.c keeps a frozen copy of the C game
+for the parity check). GAMES and SAVES on an empty VMX say NO GAMES YET / GET THEM IN VMX WORLD, and the idle demos
+wait for a game (they divided by zero). Firmware 2.2 MB -> 1.3 MB. Not yet on the rig (offline when flashed):
+`cd esp32 && pio run -e ota -t upload`; after that it starts empty, and games go on from World (GET GAMES with the
+VMX plugged in; it restarts with them when unplugged or ejected) or `tools/push_game.sh`.

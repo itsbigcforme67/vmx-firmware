@@ -13,7 +13,6 @@
 #include <WebServer.h>
 #include <StreamString.h>
 #include "../../core/vmxfw.h"
-#include "games_builtin.h"
 #include "mu.h"
 #include "../../core/vmxvol.h"
 extern "C" uint32_t (*vmx_micros)(void);
@@ -205,8 +204,7 @@ static void netStart() {                         // once connected: OTA + the li
     String s = "VMX (CoreS3 rig)\ngames on the memory unit:\n";
     uint32_t ids[32]; int n = vmx_linked() ? 0 : vol_games(mu_vol(), ids, 32);
     for (int i = 0; i < n; i++) { char p[40]; vol_game_path(ids[i], p); s += String("  ") + String(ids[i], HEX) + " " + fatx_size(mu_vol(), p) + "\n"; }
-    s += String(vmx_linked() ? "(linked to a USB host)\n" : "") + (fatx_free_bytes(mu_vol()) / 1024) + " KB free\nbuilt in:\n";
-    for (int i = 0; i < NBUILTIN; i++) s += String("  ") + BUILTIN[i].name + "\n";
+    s += String(vmx_linked() ? "(linked to a USB host)\n" : "") + (fatx_free_bytes(mu_vol()) / 1024) + " KB free\n";
     web.send(200, "text/plain", s);
   });
   // POST /game (multipart "file" = a GAME.VXP): installed on the memory unit by its ID; the VMX restarts to load it
@@ -264,9 +262,8 @@ extern "C" void plat_wifi_setup(void) {
   wm.startConfigPortal("VMX-SETUP"); portal = true;
 }
 
-// games: built-in packages, then the ones installed on the memory unit, kept in PSRAM for the session
+// games: the ones installed on the memory unit (the firmware has none of its own), kept in PSRAM for the session
 static void loadGames() {
-  for (int i = 0; i < NBUILTIN; i++) vmx_add_game(BUILTIN[i].data, BUILTIN[i].len);
   uint32_t ids[32]; int n = vol_games(mu_vol(), ids, 32);
   for (int i = 0; i < n; i++) {
     char p[40]; vol_game_path(ids[i], p); int len = fatx_size(mu_vol(), p); uint8_t *buf = len > 0 ? (uint8_t *)plat_alloc((size_t)len) : NULL;
