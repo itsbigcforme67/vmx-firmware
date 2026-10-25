@@ -234,3 +234,9 @@ for the parity check). GAMES and SAVES on an empty VMX say NO GAMES YET / GET TH
 wait for a game (they divided by zero). Firmware 2.2 MB -> 1.3 MB. Not yet on the rig (offline when flashed):
 `cd esp32 && pio run -e ota -t upload`; after that it starts empty, and games go on from World (GET GAMES with the
 VMX plugged in; it restarts with them when unplugged or ejected) or `tools/push_game.sh`.
+
+## 2026-10-24 later: on the rig (firmware without games + FOLD ROOMS with turns)
+Flashed over Wi-Fi (`pio run -e ota -t upload`, ~/.platformio/penv/bin/pio), then `tools/push_game.sh
+build/games/FOLDROOM.VXP`: FOLD ROOMS is the one game installed (the other 27 aren't on it: add them from World or
+push_game.sh). Running in its demo: ~90 M IL/s while ticking, avg 0.38 ms a tick, worst 5.2 ms (`drive.py --wifi i`),
+so the room turns are far inside a 33 ms tick. Not looked at by me: how the turns look on the panel.
